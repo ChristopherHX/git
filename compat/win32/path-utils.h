@@ -1,7 +1,9 @@
-#define has_dos_drive_prefix(path) \
+#define win32_has_dos_drive_prefix(path) \
 	(isalpha(*(path)) && (path)[1] == ':' ? 2 : 0)
+int win32_has_drive_prefix(char *path);
+#define has_dos_drive_prefix win32_has_drive_prefix
 int win32_skip_dos_drive_prefix(char **path);
-#define skip_dos_drive_prefix win32_skip_dos_drive_prefix
+#define skip_dos_drive_prefix win32_skip_drive_prefix
 static inline int win32_is_dir_sep(int c)
 {
 	return c == '/' || c == '\\';

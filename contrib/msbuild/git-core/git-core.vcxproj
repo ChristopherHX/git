@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="export.def" />
+    <ProjectReference Include="../git-core-static/git-core-static.vcxproj"/>
+  </ItemGroup>
+  <Import Project="../baseproject.xml" />
+  <ItemDefinitionGroup>
+    <Link>
+      <ModuleDefinitionFile>$(ProjectDir)/$(Platform)/$(Configuration)/exports.txt</ModuleDefinitionFile>
+    </Link>
+    <CustomBuildStep>
+      <Command>dumpbin /LINKERMEMBER:2 $(ProjectDir)../git-core-static/$(Platform)/$(Configuration)/git-core-static.lib /out:$(ProjectDir)/$(Platform)/$(Configuration)/exports.raw</Command>
+      <Outputs>$(ProjectDir)/$(Platform)/$(Configuration)/exports.raw</Outputs>
+    </CustomBuildStep>
+  </ItemDefinitionGroup>
+  <PropertyGroup>
+    <CustomBuildAfterTargets>ClCompile</CustomBuildAfterTargets>
+    <CustomBuildBeforeTargets>ExportAll</CustomBuildBeforeTargets>
+  </PropertyGroup>
+  <Target Name="ExportAll">
+    <WriteLinesToFile File="$(ProjectDir)/$(Platform)/$(Configuration)/exports.txt" Lines="LIBRARY git-core;EXPORTS;$([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Match($([System.io.File]::ReadAllText('$(ProjectDir)/$(Platform)/$(Configuration)/exports.raw')), '(\s+[0-9A-F]{1,2}\s[aA-Z].*)(\s+[0-9A-F]{1,2}\s.*)*').Value), '\s*[0-9A-F]{1,2}\s(.*)', '$1&#10;'))" Overwrite="True" Encoding="windows-1250"/>
+  </Target>
+  <PropertyGroup>
+    <BeforeLinkTargets>
+        ExportAll;
+        $(BeforeLinkTargets);
+    </BeforeLinkTargets>
+  </PropertyGroup>
+</Project>

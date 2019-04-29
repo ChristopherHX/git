@@ -136,7 +136,7 @@ int is_executable(const char *name)
 	 * file extension first because virus scanners may make
 	 * it quite expensive to open many files.
 	 */
-	if (ends_with(name, ".exe"))
+	if (ends_with(name, ".exe") || ends_with(name, ".bat") || ends_with(name, ".cmd") || ends_with(name, ".ps1"))
 		return S_IXUSR;
 
 {
@@ -274,7 +274,7 @@ static const char **prepare_shell_cmd(struct argv_array *out, const char **argv)
 		argv_array_push(out, "sh");
 #endif
 		argv_array_push(out, "-c");
-
+		
 		/*
 		 * If we have no extra arguments, we do not even need to
 		 * bother with the "$@" magic.
@@ -924,8 +924,6 @@ end_of_spawn:
 
 	if (cmd->git_cmd)
 		cmd->argv = prepare_git_cmd(&nargv, cmd->argv);
-	else if (cmd->use_shell)
-		cmd->argv = prepare_shell_cmd(&nargv, cmd->argv);
 
 	cmd->pid = mingw_spawnvpe(cmd->argv[0], cmd->argv, (char**) cmd->env,
 			cmd->dir, fhin, fhout, fherr);

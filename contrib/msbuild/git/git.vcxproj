@@ -1,0 +1,29 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ForcedIncludeFiles>$(ProjectDir)../compat.h</ForcedIncludeFiles>
+    </ClCompile>
+    <Link>
+      <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="../../../builtin/*.c">
+      <ObjectFileName>$(IntDir)builtin/</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="../../../help.c"/>
+    <ClCompile Include="../../../git.c"/>
+    <ClCompile Include="../../../common-main.c"/>
+    <ClCompile Include="../main.c"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../git-core/git-core.vcxproj"/>
+  </ItemGroup>
+  <Import Project="../baseproject.xml" />
+</Project>

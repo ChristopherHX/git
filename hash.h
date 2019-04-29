@@ -11,6 +11,8 @@
 #include <openssl/sha.h>
 #elif defined(SHA1_DC)
 #include "sha1dc_git.h"
+#elif defined(SHA1_BCRYPT) 
+#include <sha1bcrypt.h>
 #else /* SHA1_BLK */
 #include "block-sha1/sha1.h"
 #endif
@@ -19,6 +21,8 @@
 #include "sha256/gcrypt.h"
 #elif defined(SHA256_OPENSSL)
 #include <openssl/sha.h>
+#elif defined(SHA256_BCRYPT) 
+#include <sha256bcrypt.h>
 #else
 #include "sha256/block/sha256.h"
 #endif

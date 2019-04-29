@@ -1,0 +1,29 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../git-core/git-core.vcxproj"/>
+  </ItemGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ForcedIncludeFiles>$(ProjectDir)../compat.h</ForcedIncludeFiles>
+    </ClCompile>
+    <Link>
+      <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="../../../common-main.c"/>
+    <ClCompile Include="../main.c"/>
+    <ClCompile Condition="'$(MainCommand)' == ''" Include="../../../$(Command).c" />
+    <ClCompile Condition="'$(MainCommand)' != ''" Include="../../../$(MainCommand)" />
+  </ItemGroup>
+  <PropertyGroup>
+    <TargetName>git-$(Command)</TargetName>
+  </PropertyGroup>
+  <Import Project="../baseproject.xml" />
+</Project>

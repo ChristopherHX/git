@@ -1,0 +1,2 @@
+#include "../../git.rc"
+MAINICON ICON "../bin/git.ico"

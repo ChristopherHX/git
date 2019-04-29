@@ -1,0 +1,48 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <ItemGroup>
+        <ProjectToBuild Include="git/git.vcxproj">
+            <Properties>BuildProjectReferences=false</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=credential-cache--daemon</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=credential-cache</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=daemon</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=fast-import</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=http-backend</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=http-fetch</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=http-push</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=imap-send</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=remote-curl</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=remote-testsvn</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=shell;</Properties>
+        </ProjectToBuild>
+        <ProjectToBuild Include="git-command/git-command.vcxproj">
+            <Properties>BuildProjectReferences=false;Command=shell;MainCommand=contrib/credential/wincred/git-credential-wincred.c</Properties>
+        </ProjectToBuild>
+    </ItemGroup>
+        
+    <Target Name="Build">
+        <MSBuild Projects="git-core/git-core.vcxproj" BuildInParallel="true" />
+        <MSBuild Projects="@(ProjectToBuild)"/>
+    </Target>
+</Project>

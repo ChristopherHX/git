@@ -9,7 +9,7 @@ struct DIR {
 static inline void finddata2dirent(struct dirent *ent, WIN32_FIND_DATAW *fdata)
 {
 	/* convert UTF-16 name to UTF-8 */
-	xwcstoutf(ent->d_name, fdata->cFileName, sizeof(ent->d_name));
+	WideCharToMultiByte(CP_UTF8, 0, fdata->cFileName, -1, ent->d_name, sizeof(ent->d_name), 0, 0);
 
 	/* Set file type, based on WIN32_FIND_DATA */
 	if (fdata->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -27,8 +27,7 @@ DIR *opendir(const char *name)
 	DIR *dir;
 
 	/* convert name to UTF-16 and check length < MAX_PATH */
-	if ((len = xutftowcs_path(pattern, name)) < 0)
-		return NULL;
+	len = MultiByteToWideChar(CP_UTF8, 0, name, -1, pattern, MAX_PATH) - 1;
 
 	/* append optional '/' and wildcard '*' */
 	if (len && !is_dir_sep(pattern[len - 1]))

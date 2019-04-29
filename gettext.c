@@ -13,7 +13,8 @@
 #	include <locale.h>
 #	include <libintl.h>
 #	ifdef HAVE_LIBCHARSET_H
-#		include <libcharset.h>
+#		define locale_charset() "utf-8"
+// #		include <libcharset.h>
 #	else
 #		include <langinfo.h>
 #		define locale_charset() nl_langinfo(CODESET)

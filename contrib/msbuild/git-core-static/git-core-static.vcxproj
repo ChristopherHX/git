@@ -1,0 +1,68 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <PlatformToolset>v141</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ForcedIncludeFiles>$(ProjectDir)../git-core-static/msvc.h</ForcedIncludeFiles>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="msvc.cpp"/>
+    <MyFiles2 Include="$(ProjectDir)../../../*.c" Exclude="$(ProjectDir)../../../sha1dc_git.c;$(ProjectDir)../../../common-main.c;$(ProjectDir)../../../fuzz*.c"/>
+  </ItemGroup>
+  <Import Project="../baseproject.xml" />
+  <Target Name="SelectFiles">
+    <ItemGroup>
+      <MyFiles2>
+        <FilenameMain>%(FullPath)</FilenameMain>
+        <FilenameMain Condition="$([System.Text.RegularExpressions.Regex]::Match($([System.io.File]::ReadAllText('%(FullPath)')), 'int[\s&#10;&#13;]+cmd_\w+').Success)"></FilenameMain>
+      </MyFiles2>
+    </ItemGroup>
+    <ItemGroup>
+      <ClCompile Include="hashbcrypt.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/basename.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/fopen.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/memmem.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/mkdir.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/nedmalloc/nedmalloc.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/obstack.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/poll/poll.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/pread.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/qsort.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/qsort_s.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/regex/regex.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/snprintf.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/strcasestr.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/strdup.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/strlcpy.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/strtoimax.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/strtoumax.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/terminal.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32/dirent.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32/pthread.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32/syslog.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32/path-utils.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32/trace2_win32_process_info.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/win32mmap.c" />
+      <ClCompile Include="$(ProjectDir)../../../compat/mkdtemp.c" />
+      <ClCompile Include="@(MyFiles2->'%(FilenameMain)')"/>
+      <ClCompile Include="$(ProjectDir)../../../ewah/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../refs/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../vcs-svn/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../xdiff/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../negotiator/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../trace2/*.c" />
+      <ClCompile Include="$(ProjectDir)../../../sha256/block/sha256.c" />
+    </ItemGroup>
+  </Target>
+  <PropertyGroup>
+    <BuildDependsOn>
+        SelectFiles;
+        $(BuildDependsOn);
+    </BuildDependsOn>
+  </PropertyGroup>
+</Project>
