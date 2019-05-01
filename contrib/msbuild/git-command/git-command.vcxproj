@@ -9,17 +9,20 @@
     <ProjectReference Include="../git-core/git-core.vcxproj"/>
   </ItemGroup>
   <ItemDefinitionGroup>
-    <ClCompile>
+    <ClCompile Condition="'$(MainCommand)' == ''">
       <ForcedIncludeFiles>$(ProjectDir)../compat.h</ForcedIncludeFiles>
     </ClCompile>
     <Link>
       <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
+  <ItemGroup Condition="'$(MainCommand)' == ''">
+    <ClCompile Include="../compat.c"/>
     <ClCompile Include="../../../common-main.c"/>
-    <ClCompile Include="../main.c"/>
-    <ClCompile Condition="'$(MainCommand)' == ''" Include="../../../$(Command).c" />
+    <ClCompile Include="../../../$(Command).c" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MainCommand)' != ''">
+    <ClCompile Include="../compat.c"/>
     <ClCompile Condition="'$(MainCommand)' != ''" Include="../../../$(MainCommand)" />
   </ItemGroup>
   <PropertyGroup>

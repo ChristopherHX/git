@@ -37,7 +37,7 @@
             <Properties>BuildProjectReferences=false;Command=shell;</Properties>
         </ProjectToBuild>
         <ProjectToBuild Include="git-command/git-command.vcxproj">
-            <Properties>BuildProjectReferences=false;Command=shell;MainCommand=contrib/credential/wincred/git-credential-wincred.c</Properties>
+            <Properties>BuildProjectReferences=false;Command=credential-wincred;MainCommand=contrib/credential/wincred/git-credential-wincred.c</Properties>
         </ProjectToBuild>
     </ItemGroup>
         

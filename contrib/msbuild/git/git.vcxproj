@@ -14,13 +14,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="../compat.c"/>
+    <ClCompile Include="../../../common-main.c"/>
     <ClCompile Include="../../../builtin/*.c">
       <ObjectFileName>$(IntDir)builtin/</ObjectFileName>
     </ClCompile>
     <ClCompile Include="../../../help.c"/>
     <ClCompile Include="../../../git.c"/>
-    <ClCompile Include="../../../common-main.c"/>
-    <ClCompile Include="../main.c"/>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../git-core/git-core.vcxproj"/>

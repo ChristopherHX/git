@@ -598,7 +598,6 @@ void msvc_startup()
 		WSAStartup(WINSOCK_VERSION, &data);
 	}
 	HANDLE hout = GetStdHandle(STD_OUTPUT_HANDLE);
-	// HANDLE hout = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
 	DWORD mode;
 	SetConsoleCP(CP_UTF8);
 	SetConsoleOutputCP(CP_UTF8);

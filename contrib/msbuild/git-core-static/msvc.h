@@ -69,7 +69,7 @@ extern "C" {
 	typedef int pid_t;
 	pid_t msvc_spawnv(const char *cmd, char *const*argv);
 	pid_t msvc_spawnve_fd(const char *cmd, char *const* argv, char ** deltaenv, const char *dir, HANDLE hStdOutput, HANDLE hStdInput, HANDLE hStdError);
-#define mingw_spawnvpe(cmd, argv, deltaenv, dir, fhout, fhin, fherr) msvc_spawnve_fd(cmd, argv, deltaenv, dir, fhout == 0 ? GetStdHandle(STD_OUTPUT_HANDLE) : _get_osfhandle(fhout), fhin == 1 ? GetStdHandle(STD_INPUT_HANDLE) : _get_osfhandle(fhin), fherr == 2 ? GetStdHandle(STD_ERROR_HANDLE) : _get_osfhandle(fherr))
+#define mingw_spawnvpe(cmd, argv, deltaenv, dir, fhin, fhout, fherr) msvc_spawnve_fd(cmd, argv, deltaenv, dir, fhout == 0 ? GetStdHandle(STD_OUTPUT_HANDLE) : _get_osfhandle(fhout), fhin == 1 ? GetStdHandle(STD_INPUT_HANDLE) : _get_osfhandle(fhin), fherr == 2 ? GetStdHandle(STD_ERROR_HANDLE) : _get_osfhandle(fherr))
 #define spawnv msvc_spawnv
 	int msvc_execv(const char *cmd, char *const *argv);
 	int msvc_execvp(const char *cmd, char *const *argv);
