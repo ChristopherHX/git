@@ -53,7 +53,7 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup Condition="'$(ConfigurationType)' != 'StaticLibrary'">
-    <TargetPath>$(ProjectDir)/../bin/$(Platform)/$(Configuration)/$(TargetName)$(TargetExt)</TargetPath>
+    <TargetPath>$(ProjectDir)../bin/$(Platform)/$(Configuration)/$(TargetName)$(TargetExt)</TargetPath>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -64,6 +64,7 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>binmode.obj;invalidcontinue.obj;noenv.obj;noarg.obj;Shlwapi.lib;advapi32.lib;uuid.lib;bcrypt.lib;libexpat.lib;libcurl.lib;zdll.lib;libintl.lib;libiconv.lib;ws2_32.lib;msvcrt.lib;ucrt.lib;legacy_stdio_definitions.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ManifestInput>$(ProjectDir)../manifest.xml</ManifestInput>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>MAJOR=$(Major);MINOR=$(Minor);MICRO=$(Micro);PATCHLEVEL=$(Patchlevel);GIT_VERSION="$(Major).$(Minor).$(Micro)";_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
