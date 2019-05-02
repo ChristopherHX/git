@@ -177,26 +177,6 @@ int lstat(const char * path, struct stat * status)
 	return _wlstat(getPath(path).data(), status);
 }
 
-int _wstat2(const wchar_t * path, struct stat * status)
-{
-	HANDLE link;
-	if ((link = CreateFileW(path, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL)) != INVALID_HANDLE_VALUE) {
-		int fd;
-		if ((fd = _open_osfhandle((intptr_t)link, _O_BINARY)) != -1)
-		{
-			int ret = fstat(fd, status);
-			_close(fd);
-			return ret;
-		} else {
-			errno = EBADF;
-		}
-		CloseHandle(link);
-	} else {
-		errno = ENOENT;
-	}
-	return -1;
-}
-
 int msvc_stat(const char * path, struct stat * status)
 {
 	return _wstat(getPath(path).data(), (struct _stat64i32*)status);
