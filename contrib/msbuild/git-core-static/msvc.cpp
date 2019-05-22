@@ -236,7 +236,7 @@ int msvc_fgetc(FILE *stream)
 			break;
 
 		/* Ctrl+C was pressed, simulate SIGINT and retry */
-		//msvc_raise(SIGINT);
+		msvc_raise(SIGINT);
 	}
 	SetConsoleCtrlHandler(ctrl_ignore, FALSE);
 	return ch;
