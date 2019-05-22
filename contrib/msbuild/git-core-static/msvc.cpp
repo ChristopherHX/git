@@ -432,7 +432,7 @@ int msvc_putenv(const char *_EnvString)
 int setenv(const char *name, const char *value, int replace)
 {
 	std::string & val = env[name];
-	if (replace || val.empty())
+	if (replace || (val.empty() && (val = wcstoutf8(_wgetenv(utf8towcs(name)))).empty()))
 	{
 		if (value != nullptr)
 			val = value;
