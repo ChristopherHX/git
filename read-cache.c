@@ -709,6 +709,7 @@ int add_to_index(struct index_state *istate, const char *path, struct stat *st, 
 	int add_option = (ADD_CACHE_OK_TO_ADD|ADD_CACHE_OK_TO_REPLACE|
 			  (intent_only ? ADD_CACHE_NEW_ONLY : 0));
 	int hash_flags = HASH_WRITE_OBJECT;
+	struct object_id oid;
 
 	if (flags & ADD_CACHE_RENORMALIZE)
 		hash_flags |= HASH_RENORMALIZE;
@@ -718,6 +719,8 @@ int add_to_index(struct index_state *istate, const char *path, struct stat *st, 
 
 	namelen = strlen(path);
 	if (S_ISDIR(st_mode)) {
+		if (resolve_gitlink_ref(path, "HEAD", &oid) < 0)
+			return error(_("'%s' does not have a commit checked out"), path);
 		while (namelen && path[namelen-1] == '/')
 			namelen--;
 	}
@@ -2323,6 +2326,7 @@ int discard_index(struct index_state *istate)
 	free_name_hash(istate);
 	cache_tree_free(&(istate->cache_tree));
 	istate->initialized = 0;
+	istate->fsmonitor_has_run_once = 0;
 	FREE_AND_NULL(istate->cache);
 	istate->cache_alloc = 0;
 	discard_split_index(istate);
@@ -3128,7 +3132,7 @@ static int write_shared_index(struct index_state *istate,
 	trace2_region_enter_printf("index", "shared/do_write_index",
 				   the_repository, "%s", (*temp)->filename.buf);
 	ret = do_write_index(si->base, *temp, 1);
-	trace2_region_enter_printf("index", "shared/do_write_index",
+	trace2_region_leave_printf("index", "shared/do_write_index",
 				   the_repository, "%s", (*temp)->filename.buf);
 
 	if (ret)

@@ -1,23 +1,19 @@
 #include "cache.h"
 #include "trace2/tr2_dst.h"
+#include "trace2/tr2_sid.h"
+#include "trace2/tr2_sysenv.h"
 
 /*
- * If a Trace2 target cannot be opened for writing, we should issue a
- * warning to stderr, but this is very annoying if the target is a pipe
- * or socket and beyond the user's control -- especially since every
- * git command (and sub-command) will print the message.  So we silently
- * eat these warnings and just discard the trace data.
- *
- * Enable the following environment variable to see these warnings.
+ * How many attempts we will make at creating an automatically-named trace file.
  */
-#define TR2_ENVVAR_DST_DEBUG "GIT_TR2_DST_DEBUG"
+#define MAX_AUTO_ATTEMPTS 10
 
 static int tr2_dst_want_warning(void)
 {
 	static int tr2env_dst_debug = -1;
 
 	if (tr2env_dst_debug == -1) {
-		const char *env_value = getenv(TR2_ENVVAR_DST_DEBUG);
+		const char *env_value = tr2_sysenv_get(TR2_SYSENV_DST_DEBUG);
 		if (!env_value || !*env_value)
 			tr2env_dst_debug = 0;
 		else
@@ -36,13 +32,65 @@ void tr2_dst_trace_disable(struct tr2_dst *dst)
 	dst->need_close = 0;
 }
 
+static int tr2_dst_try_auto_path(struct tr2_dst *dst, const char *tgt_prefix)
+{
+	int fd;
+	const char *last_slash, *sid = tr2_sid_get();
+	struct strbuf path = STRBUF_INIT;
+	size_t base_path_len;
+	unsigned attempt_count;
+
+	last_slash = strrchr(sid, '/');
+	if (last_slash)
+		sid = last_slash + 1;
+
+	strbuf_addstr(&path, tgt_prefix);
+	if (!is_dir_sep(path.buf[path.len - 1]))
+		strbuf_addch(&path, '/');
+	strbuf_addstr(&path, sid);
+	base_path_len = path.len;
+
+	for (attempt_count = 0; attempt_count < MAX_AUTO_ATTEMPTS; attempt_count++) {
+		if (attempt_count > 0) {
+			strbuf_setlen(&path, base_path_len);
+			strbuf_addf(&path, ".%d", attempt_count);
+		}
+
+		fd = open(path.buf, O_WRONLY | O_CREAT | O_EXCL, 0666);
+		if (fd != -1)
+			break;
+	}
+
+	if (fd == -1) {
+		if (tr2_dst_want_warning())
+			warning("trace2: could not open '%.*s' for '%s' tracing: %s",
+				(int) base_path_len, path.buf,
+				tr2_sysenv_display_name(dst->sysenv_var),
+				strerror(errno));
+
+		tr2_dst_trace_disable(dst);
+		strbuf_release(&path);
+		return 0;
+	}
+
+	strbuf_release(&path);
+
+	dst->fd = fd;
+	dst->need_close = 1;
+	dst->initialized = 1;
+
+	return dst->fd;
+}
+
 static int tr2_dst_try_path(struct tr2_dst *dst, const char *tgt_value)
 {
 	int fd = open(tgt_value, O_WRONLY | O_APPEND | O_CREAT, 0666);
 	if (fd == -1) {
 		if (tr2_dst_want_warning())
 			warning("trace2: could not open '%s' for '%s' tracing: %s",
-				tgt_value, dst->env_var_name, strerror(errno));
+				tgt_value,
+				tr2_sysenv_display_name(dst->sysenv_var),
+				strerror(errno));
 
 		tr2_dst_trace_disable(dst);
 		return 0;
@@ -116,7 +164,8 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
 	if (!path || !*path) {
 		if (tr2_dst_want_warning())
 			warning("trace2: invalid AF_UNIX value '%s' for '%s' tracing",
-				tgt_value, dst->env_var_name);
+				tgt_value,
+				tr2_sysenv_display_name(dst->sysenv_var));
 
 		tr2_dst_trace_disable(dst);
 		return 0;
@@ -126,7 +175,7 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
 	    strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
 		if (tr2_dst_want_warning())
 			warning("trace2: invalid AF_UNIX path '%s' for '%s' tracing",
-				path, dst->env_var_name);
+				path, tr2_sysenv_display_name(dst->sysenv_var));
 
 		tr2_dst_trace_disable(dst);
 		return 0;
@@ -148,7 +197,8 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
 error:
 	if (tr2_dst_want_warning())
 		warning("trace2: could not connect to socket '%s' for '%s' tracing: %s",
-			path, dst->env_var_name, strerror(e));
+			path, tr2_sysenv_display_name(dst->sysenv_var),
+			strerror(e));
 
 	tr2_dst_trace_disable(dst);
 	return 0;
@@ -168,7 +218,7 @@ static void tr2_dst_malformed_warning(struct tr2_dst *dst,
 	struct strbuf buf = STRBUF_INIT;
 
 	strbuf_addf(&buf, "trace2: unknown value for '%s': '%s'",
-		    dst->env_var_name, tgt_value);
+		    tr2_sysenv_display_name(dst->sysenv_var), tgt_value);
 	warning("%s", buf.buf);
 
 	strbuf_release(&buf);
@@ -184,7 +234,7 @@ int tr2_dst_get_trace_fd(struct tr2_dst *dst)
 
 	dst->initialized = 1;
 
-	tgt_value = getenv(dst->env_var_name);
+	tgt_value = tr2_sysenv_get(dst->sysenv_var);
 
 	if (!tgt_value || !strcmp(tgt_value, "") || !strcmp(tgt_value, "0") ||
 	    !strcasecmp(tgt_value, "false")) {
@@ -202,8 +252,12 @@ int tr2_dst_get_trace_fd(struct tr2_dst *dst)
 		return dst->fd;
 	}
 
-	if (is_absolute_path(tgt_value))
-		return tr2_dst_try_path(dst, tgt_value);
+	if (is_absolute_path(tgt_value)) {
+		if (is_directory(tgt_value))
+			return tr2_dst_try_auto_path(dst, tgt_value);
+		else
+			return tr2_dst_try_path(dst, tgt_value);
+	}
 
 #ifndef NO_UNIX_SOCKETS
 	if (starts_with(tgt_value, PREFIX_AF_UNIX))
@@ -246,7 +300,8 @@ void tr2_dst_write_line(struct tr2_dst *dst, struct strbuf *buf_line)
 		return;
 
 	if (tr2_dst_want_warning())
-		warning("unable to write trace to '%s': %s", dst->env_var_name,
+		warning("unable to write trace to '%s': %s",
+			tr2_sysenv_display_name(dst->sysenv_var),
 			strerror(errno));
 	tr2_dst_trace_disable(dst);
 }

@@ -171,17 +171,22 @@ static int git_sequencer_config(const char *k, const char *v, void *cb)
 		if (status)
 			return status;
 
-		if (!strcmp(s, "verbatim"))
+		if (!strcmp(s, "verbatim")) {
 			opts->default_msg_cleanup = COMMIT_MSG_CLEANUP_NONE;
-		else if (!strcmp(s, "whitespace"))
+			opts->explicit_cleanup = 1;
+		} else if (!strcmp(s, "whitespace")) {
 			opts->default_msg_cleanup = COMMIT_MSG_CLEANUP_SPACE;
-		else if (!strcmp(s, "strip"))
+			opts->explicit_cleanup = 1;
+		} else if (!strcmp(s, "strip")) {
 			opts->default_msg_cleanup = COMMIT_MSG_CLEANUP_ALL;
-		else if (!strcmp(s, "scissors"))
-			opts->default_msg_cleanup = COMMIT_MSG_CLEANUP_SPACE;
-		else
+			opts->explicit_cleanup = 1;
+		} else if (!strcmp(s, "scissors")) {
+			opts->default_msg_cleanup = COMMIT_MSG_CLEANUP_SCISSORS;
+			opts->explicit_cleanup = 1;
+		} else {
 			warning(_("invalid commit message cleanup mode '%s'"),
 				  s);
+		}
 
 		free((char *)s);
 		return status;
@@ -510,10 +515,53 @@ static int fast_forward_to(struct repository *r,
 	return 0;
 }
 
+enum commit_msg_cleanup_mode get_cleanup_mode(const char *cleanup_arg,
+	int use_editor)
+{
+	if (!cleanup_arg || !strcmp(cleanup_arg, "default"))
+		return use_editor ? COMMIT_MSG_CLEANUP_ALL :
+				    COMMIT_MSG_CLEANUP_SPACE;
+	else if (!strcmp(cleanup_arg, "verbatim"))
+		return COMMIT_MSG_CLEANUP_NONE;
+	else if (!strcmp(cleanup_arg, "whitespace"))
+		return COMMIT_MSG_CLEANUP_SPACE;
+	else if (!strcmp(cleanup_arg, "strip"))
+		return COMMIT_MSG_CLEANUP_ALL;
+	else if (!strcmp(cleanup_arg, "scissors"))
+		return use_editor ? COMMIT_MSG_CLEANUP_SCISSORS :
+				    COMMIT_MSG_CLEANUP_SPACE;
+	else
+		die(_("Invalid cleanup mode %s"), cleanup_arg);
+}
+
+/*
+ * NB using int rather than enum cleanup_mode to stop clang's
+ * -Wtautological-constant-out-of-range-compare complaining that the comparison
+ * is always true.
+ */
+static const char *describe_cleanup_mode(int cleanup_mode)
+{
+	static const char *modes[] = { "whitespace",
+				       "verbatim",
+				       "scissors",
+				       "strip" };
+
+	if (cleanup_mode < ARRAY_SIZE(modes))
+		return modes[cleanup_mode];
+
+	BUG("invalid cleanup_mode provided (%d)", cleanup_mode);
+}
+
 void append_conflicts_hint(struct index_state *istate,
-			   struct strbuf *msgbuf)
+	struct strbuf *msgbuf, enum commit_msg_cleanup_mode cleanup_mode)
 {
 	int i;
+
+	if (cleanup_mode == COMMIT_MSG_CLEANUP_SCISSORS) {
+		strbuf_addch(msgbuf, '\n');
+		wt_status_append_cut_line(msgbuf);
+		strbuf_addch(msgbuf, comment_line_char);
+	}
 
 	strbuf_addch(msgbuf, '\n');
 	strbuf_commented_addf(msgbuf, "Conflicts:\n");
@@ -582,7 +630,8 @@ static int do_recursive_merge(struct repository *r,
 			_(action_name(opts)));
 
 	if (!clean)
-		append_conflicts_hint(r->index, msgbuf);
+		append_conflicts_hint(r->index, msgbuf,
+				      opts->default_msg_cleanup);
 
 	return !clean;
 }
@@ -901,7 +950,6 @@ static int run_git_commit(struct repository *r,
 			  unsigned int flags)
 {
 	struct child_process cmd = CHILD_PROCESS_INIT;
-	const char *value;
 
 	if ((flags & CREATE_ROOT_COMMIT) && !(flags & AMEND_MSG)) {
 		struct strbuf msg = STRBUF_INIT, script = STRBUF_INIT;
@@ -971,7 +1019,7 @@ static int run_git_commit(struct repository *r,
 		argv_array_push(&cmd.args, "-e");
 	else if (!(flags & CLEANUP_MSG) &&
 		 !opts->signoff && !opts->record_origin &&
-		 git_config_get_value("commit.cleanup", &value))
+		 !opts->explicit_cleanup)
 		argv_array_push(&cmd.args, "--cleanup=verbatim");
 
 	if ((flags & ALLOW_EMPTY))
@@ -1010,6 +1058,16 @@ static int rest_is_empty(const struct strbuf *sb, int start)
 	}
 
 	return 1;
+}
+
+void cleanup_message(struct strbuf *msgbuf,
+	enum commit_msg_cleanup_mode cleanup_mode, int verbose)
+{
+	if (verbose || /* Truncate the message just before the diff, if any. */
+	    cleanup_mode == COMMIT_MSG_CLEANUP_SCISSORS)
+		strbuf_setlen(msgbuf, wt_status_locate_end(msgbuf->buf, msgbuf->len));
+	if (cleanup_mode != COMMIT_MSG_CLEANUP_NONE)
+		strbuf_stripspace(msgbuf, cleanup_mode == COMMIT_MSG_CLEANUP_ALL);
 }
 
 /*
@@ -1382,8 +1440,13 @@ static int try_to_commit(struct repository *r,
 		msg = &commit_msg;
 	}
 
-	cleanup = (flags & CLEANUP_MSG) ? COMMIT_MSG_CLEANUP_ALL :
-					  opts->default_msg_cleanup;
+	if (flags & CLEANUP_MSG)
+		cleanup = COMMIT_MSG_CLEANUP_ALL;
+	else if ((opts->signoff || opts->record_origin) &&
+		 !opts->explicit_cleanup)
+		cleanup = COMMIT_MSG_CLEANUP_SPACE;
+	else
+		cleanup = opts->default_msg_cleanup;
 
 	if (cleanup != COMMIT_MSG_CLEANUP_NONE)
 		strbuf_stripspace(msg, cleanup == COMMIT_MSG_CLEANUP_ALL);
@@ -2105,6 +2168,41 @@ static int parse_insn_line(struct repository *r, struct todo_item *item,
 	return !item->commit;
 }
 
+int sequencer_get_last_command(struct repository *r, enum replay_action *action)
+{
+	struct todo_item item;
+	char *eol;
+	const char *todo_file;
+	struct strbuf buf = STRBUF_INIT;
+	int ret = -1;
+
+	todo_file = git_path_todo_file();
+	if (strbuf_read_file(&buf, todo_file, 0) < 0) {
+		if (errno == ENOENT)
+			return -1;
+		else
+			return error_errno("unable to open '%s'", todo_file);
+	}
+	eol = strchrnul(buf.buf, '\n');
+	if (buf.buf != eol && eol[-1] == '\r')
+		eol--; /* strip Carriage Return */
+	if (parse_insn_line(r, &item, buf.buf, buf.buf, eol))
+		goto fail;
+	if (item.command == TODO_PICK)
+		*action = REPLAY_PICK;
+	else if (item.command == TODO_REVERT)
+		*action = REPLAY_REVERT;
+	else
+		goto fail;
+
+	ret = 0;
+
+ fail:
+	strbuf_release(&buf);
+
+	return ret;
+}
+
 int todo_list_parse_insn_buffer(struct repository *r, char *buf,
 				struct todo_list *todo_list)
 {
@@ -2186,6 +2284,57 @@ static ssize_t strbuf_read_file_or_whine(struct strbuf *sb, const char *path)
 	if (len < 0)
 		return error(_("could not read '%s'."), path);
 	return len;
+}
+
+static int have_finished_the_last_pick(void)
+{
+	struct strbuf buf = STRBUF_INIT;
+	const char *eol;
+	const char *todo_path = git_path_todo_file();
+	int ret = 0;
+
+	if (strbuf_read_file(&buf, todo_path, 0) < 0) {
+		if (errno == ENOENT) {
+			return 0;
+		} else {
+			error_errno("unable to open '%s'", todo_path);
+			return 0;
+		}
+	}
+	/* If there is only one line then we are done */
+	eol = strchr(buf.buf, '\n');
+	if (!eol || !eol[1])
+		ret = 1;
+
+	strbuf_release(&buf);
+
+	return ret;
+}
+
+void sequencer_post_commit_cleanup(struct repository *r)
+{
+	struct replay_opts opts = REPLAY_OPTS_INIT;
+	int need_cleanup = 0;
+
+	if (file_exists(git_path_cherry_pick_head(r))) {
+		unlink(git_path_cherry_pick_head(r));
+		opts.action = REPLAY_PICK;
+		need_cleanup = 1;
+	}
+
+	if (file_exists(git_path_revert_head(r))) {
+		unlink(git_path_revert_head(r));
+		opts.action = REPLAY_REVERT;
+		need_cleanup = 1;
+	}
+
+	if (!need_cleanup)
+		return;
+
+	if (!have_finished_the_last_pick())
+		return;
+
+	sequencer_remove_state(&opts);
 }
 
 static int read_populate_todo(struct repository *r,
@@ -2303,7 +2452,10 @@ static int populate_opts_cb(const char *key, const char *value, void *data)
 		opts->allow_rerere_auto =
 			git_config_bool_or_int(key, value, &error_flag) ?
 				RERERE_AUTOUPDATE : RERERE_NOAUTOUPDATE;
-	else
+	else if (!strcmp(key, "options.default-msg-cleanup")) {
+		opts->explicit_cleanup = 1;
+		opts->default_msg_cleanup = get_cleanup_mode(value, 1);
+	} else
 		return error(_("invalid key: %s"), key);
 
 	if (!error_flag)
@@ -2428,14 +2580,15 @@ static void write_strategy_opts(struct replay_opts *opts)
 }
 
 int write_basic_state(struct replay_opts *opts, const char *head_name,
-		      const char *onto, const char *orig_head)
+		      struct commit *onto, const char *orig_head)
 {
 	const char *quiet = getenv("GIT_QUIET");
 
 	if (head_name)
 		write_file(rebase_path_head_name(), "%s\n", head_name);
 	if (onto)
-		write_file(rebase_path_onto(), "%s\n", onto);
+		write_file(rebase_path_onto(), "%s\n",
+			   oid_to_hex(&onto->object.oid));
 	if (orig_head)
 		write_file(rebase_path_orig_head(), "%s\n", orig_head);
 
@@ -2725,6 +2878,11 @@ static int save_opts(struct replay_opts *opts)
 				"options.allow-rerere-auto",
 				opts->allow_rerere_auto == RERERE_AUTOUPDATE ?
 				"true" : "false");
+
+	if (opts->explicit_cleanup)
+		res |= git_config_set_in_file_gently(opts_file,
+				"options.default-msg-cleanup",
+				describe_cleanup_mode(opts->default_msg_cleanup));
 	return res;
 }
 
@@ -3446,10 +3604,11 @@ static const char *reflog_message(struct replay_opts *opts,
 	return buf.buf;
 }
 
-static int run_git_checkout(struct replay_opts *opts, const char *commit,
-			    const char *action)
+static int run_git_checkout(struct repository *r, struct replay_opts *opts,
+			    const char *commit, const char *action)
 {
 	struct child_process cmd = CHILD_PROCESS_INIT;
+	int ret;
 
 	cmd.git_cmd = 1;
 
@@ -3458,26 +3617,32 @@ static int run_git_checkout(struct replay_opts *opts, const char *commit,
 	argv_array_pushf(&cmd.env_array, GIT_REFLOG_ACTION "=%s", action);
 
 	if (opts->verbose)
-		return run_command(&cmd);
+		ret = run_command(&cmd);
 	else
-		return run_command_silent_on_success(&cmd);
+		ret = run_command_silent_on_success(&cmd);
+
+	if (!ret)
+		discard_index(r->index);
+
+	return ret;
 }
 
-int prepare_branch_to_be_rebased(struct replay_opts *opts, const char *commit)
+int prepare_branch_to_be_rebased(struct repository *r, struct replay_opts *opts,
+				 const char *commit)
 {
 	const char *action;
 
 	if (commit && *commit) {
 		action = reflog_message(opts, "start", "checkout %s", commit);
-		if (run_git_checkout(opts, commit, action))
+		if (run_git_checkout(r, opts, commit, action))
 			return error(_("could not checkout %s"), commit);
 	}
 
 	return 0;
 }
 
-static int checkout_onto(struct replay_opts *opts,
-			 const char *onto_name, const char *onto,
+static int checkout_onto(struct repository *r, struct replay_opts *opts,
+			 const char *onto_name, const struct object_id *onto,
 			 const char *orig_head)
 {
 	struct object_id oid;
@@ -3486,7 +3651,7 @@ static int checkout_onto(struct replay_opts *opts,
 	if (get_oid(orig_head, &oid))
 		return error(_("%s: not a valid OID"), orig_head);
 
-	if (run_git_checkout(opts, onto, action)) {
+	if (run_git_checkout(r, opts, oid_to_hex(onto), action)) {
 		apply_autostash(opts);
 		sequencer_remove_state(opts);
 		return error(_("could not detach HEAD"));
@@ -4762,16 +4927,16 @@ static int skip_unnecessary_picks(struct repository *r,
 
 int complete_action(struct repository *r, struct replay_opts *opts, unsigned flags,
 		    const char *shortrevisions, const char *onto_name,
-		    const char *onto, const char *orig_head, struct string_list *commands,
-		    unsigned autosquash, struct todo_list *todo_list)
+		    struct commit *onto, const char *orig_head,
+		    struct string_list *commands, unsigned autosquash,
+		    struct todo_list *todo_list)
 {
 	const char *shortonto, *todo_file = rebase_path_todo();
 	struct todo_list new_todo = TODO_LIST_INIT;
 	struct strbuf *buf = &todo_list->buf;
-	struct object_id oid;
+	struct object_id oid = onto->object.oid;
 	int res;
 
-	get_oid(onto, &oid);
 	shortonto = find_unique_abbrev(&oid, DEFAULT_ABBREV);
 
 	if (buf->len == 0) {
@@ -4814,7 +4979,7 @@ int complete_action(struct repository *r, struct replay_opts *opts, unsigned fla
 	if (todo_list_parse_insn_buffer(r, new_todo.buf.buf, &new_todo) ||
 	    todo_list_check(todo_list, &new_todo)) {
 		fprintf(stderr, _(edit_todo_list_advice));
-		checkout_onto(opts, onto_name, onto, orig_head);
+		checkout_onto(r, opts, onto_name, &onto->object.oid, orig_head);
 		todo_list_release(&new_todo);
 
 		return -1;
@@ -4833,7 +4998,7 @@ int complete_action(struct repository *r, struct replay_opts *opts, unsigned fla
 
 	todo_list_release(&new_todo);
 
-	if (checkout_onto(opts, onto_name, oid_to_hex(&oid), orig_head))
+	if (checkout_onto(r, opts, onto_name, &oid, orig_head))
 		return -1;
 
 	if (require_clean_work_tree(r, "rebase", "", 1, 1))
