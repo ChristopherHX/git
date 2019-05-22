@@ -12,6 +12,8 @@
 #include <regex>
 #include <filesystem>
 #include <WinUser.h>
+#include <iostream>
+#include <VersionHelpers.h>
 
 	int err_win_to_posix(DWORD winerr)
 	{
@@ -560,6 +562,19 @@ std::vector<std::basic_string<T>> CommandLineToArgv(const wchar_t * CmdLine, siz
 
 std::vector<std::string> _argv;
 
+extern "C" NTSYSAPI NTSTATUS RtlGetVersion(
+  PRTL_OSVERSIONINFOW lpVersionInformation
+);
+
+const char * charset;
+UINT icodepage;
+UINT codepage;
+DWORD mode;
+
+extern "C" const char * locale_charset() {
+	return charset;
+}
+
 void msvc_exit()
 {
 	char ** &argv = __argv;
@@ -568,6 +583,9 @@ void msvc_exit()
 		HeapFree(GetProcessHeap(), 0, argv);
 		argv = NULL;
 	}
+	SetConsoleCP(icodepage);
+	SetConsoleOutputCP(codepage);
+	SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), mode);
 	WSACleanup();
 }
 
@@ -578,15 +596,28 @@ void msvc_startup()
 		WSAStartup(WINSOCK_VERSION, &data);
 	}
 	HANDLE hout = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD mode;
-	SetConsoleCP(CP_UTF8);
-	SetConsoleOutputCP(CP_UTF8);
+	RTL_OSVERSIONINFOW ver;
+	RtlGetVersion(&ver);
+	icodepage = GetConsoleCP();
+	codepage = GetConsoleOutputCP();
 	GetConsoleMode(hout, &mode);
-	BOOL b = SetConsoleMode(hout, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+	if(ver.dwBuildNumber >= 14393) {
+		charset = "utf-8";
+		SetConsoleCP(CP_UTF8);
+		SetConsoleOutputCP(CP_UTF8);
+		setenv(u8"TERM", u8"xterm-256color", 0);
+		SetConsoleMode(hout, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+	} else {
+		char * chs = new char[10];
+		chs[0] = 'c';
+		chs[1] = 'p';
+		itoa(codepage, chs + 2, 10);
+		charset = chs;
+	}
+	setlocale( LC_ALL, ".65001" );
 	_setmode(_fileno(stdin), _O_BINARY);
 	_setmode(_fileno(stdout), _O_BINARY);
 	_setmode(_fileno(stderr), _O_BINARY );
-	setlocale( LC_ALL, ".65001" );
 	_argv = CommandLineToArgv(GetCommandLineW());
 	auto & argc = __argc = _argv.size();
 	auto & argv = __argv = (char**)HeapAlloc(GetProcessHeap(), 0, (argc + 1) * sizeof(char*));
