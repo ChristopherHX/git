@@ -289,11 +289,6 @@ static inline long long filetime_to_hnsec(const FILETIME *ft)
 	return winTime - 116444736000000000LL;
 }
 
-static inline time_t filetime_to_time_t(const FILETIME *ft)
-{
-	return (time_t)(filetime_to_hnsec(ft) / 10000000);
-}
-
 static inline void time_t_to_filetime(time_t t, FILETIME *ft)
 {
 	long long winTime = t * 10000000LL + 116444736000000000LL;
@@ -450,44 +445,6 @@ int unsetenv(const char * name)
 	return setenv(name, NULL, 1);
 }
 
-static const char *parse_interpreter(const char *cmd)
-{
-	static char buf[100];
-	char *p, *opt;
-	int n, fd;
-
-	/* don't even try a .exe */
-	n = strlen(cmd);
-	if (n >= 4 && !_stricmp(cmd + n - 4, ".exe"))
-		return NULL;
-
-	if (n >= 4 && !_stricmp(cmd + n - 4, ".cmd"))
-		return "C:\\Windows\\system32\\cmd.exe";
-
-	fd = open(cmd, O_RDONLY);
-	if (fd < 0)
-		return NULL;
-	n = read(fd, buf, sizeof(buf) - 1);
-	close(fd);
-	if (n < 4)	/* at least '#!/x' and not error */
-		return NULL;
-
-	if (buf[0] != '#' || buf[1] != '!')
-		return NULL;
-	buf[n] = '\0';
-	p = buf + strcspn(buf, "\r\n");
-	if (!*p)
-		return NULL;
-
-	*p = '\0';
-	if (!(p = strrchr(buf + 2, '/')) && !(p = strrchr(buf + 2, '\\')))
-		return NULL;
-	/* strip options */
-	if ((opt = strchr(p + 1, ' ')))
-		*opt = '\0';
-	return p + 1;
-}
-
 class __noconv {
 public:
 	inline std::wstring&& to_bytes(std::wstring&& str) {
@@ -501,7 +458,6 @@ std::vector<std::basic_string<T>> CommandLineToArgv(const wchar_t * CmdLine, siz
 {
 	wchar_t a;
 	Converter converter;
-	size_t len = wcslen(CmdLine);
 	std::vector<std::basic_string<T>> argv;
 	std::wregex sq(L"^((\\\\'|\\\\\\\\|[^'])*)'");
 	std::wregex sqe(L"\\\\('|\\\\)'");
@@ -941,7 +897,6 @@ int msvc_accept(int sockfd1, struct sockaddr *sa, socklen_t *sz)
 
 	/* convert into a file descriptor */
 	if ((sockfd2 = _open_osfhandle(s2, O_RDWR | O_BINARY)) < 0) {
-		int err = errno;
 		closesocket(s2);
 		return -1;
 	}

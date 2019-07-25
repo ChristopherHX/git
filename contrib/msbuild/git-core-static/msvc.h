@@ -2,6 +2,8 @@
 #define __MSVC__HEAD
 
 #pragma warning( disable : 4141)
+#include <sys/stat.h>
+#include <sys/utime.h>
 #include <direct.h>
 #include <process.h>
 #include <malloc.h>
