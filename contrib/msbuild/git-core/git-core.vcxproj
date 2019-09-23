@@ -2,7 +2,7 @@
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <ItemGroup>
@@ -15,7 +15,7 @@
       <ModuleDefinitionFile>$(ProjectDir)/$(IntDir)exports.txt</ModuleDefinitionFile>
     </Link>
     <CustomBuildStep>
-      <Command>dumpbin /LINKERMEMBER:2 $(ProjectDir)../git-core-static/$(IntDir)git-core-static.lib /out:$(ProjectDir)/$(IntDir)exports.raw</Command>
+      <Command>dumpbin /LINKERMEMBER:2 $(ProjectDir)../git-core-static/$(IntDir)git-core-static.lib /out:$(ProjectDir)/$(IntDir)exports.raw || llvm-nm -extern-only $(ProjectDir)../git-core-static/$(IntDir)git-core-static.lib > $(ProjectDir)/$(IntDir)exports.raw</Command>
       <Outputs>$(ProjectDir)/$(IntDir)exports.raw</Outputs>
     </CustomBuildStep>
   </ItemDefinitionGroup>
@@ -26,7 +26,7 @@
     <Win32SymbolPrefix Condition="'$(Platform)' == 'Win32'" >_?</Win32SymbolPrefix>
   </PropertyGroup>
   <Target Name="ExportAll">
-    <WriteLinesToFile File="$(ProjectDir)/$(IntDir)exports.txt" Lines="LIBRARY git-core;EXPORTS;$([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Match($([System.io.File]::ReadAllText('$(ProjectDir)/$(IntDir)exports.raw')), '(\s+[0-9A-F]{1,2}\s$(Win32SymbolPrefix)[aA-Z].*)(\s+[0-9A-F]{1,2}\s.*)*').Value), '\s*[0-9A-F]{1,2}\s$(Win32SymbolPrefix)(.*)', '$1&#10;')), '(\n_.*|.*[@\?].*\n)', ''))" Overwrite="True" Encoding="windows-1250"/>
+    <WriteLinesToFile File="$(ProjectDir)/$(IntDir)exports.txt" Lines="LIBRARY git-core;EXPORTS;$([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Replace($([System.Text.RegularExpressions.Regex]::Match($([System.io.File]::ReadAllText('$(ProjectDir)/$(IntDir)exports.raw')), '((\s+[0-9A-F]{1,2}\s$(Win32SymbolPrefix)[aA-Z].*)(\s+[0-9A-F]{1,2}\s.*)*|\n.*:\n(.*\n)*)').Value), '[0-9A-Fa-f]{8}\s[^BCDRT]\s$(Win32SymbolPrefix)([^\s\r\n]*)(\r\n|\r|\n)', '')), '(\s*[0-9A-F]{1,2}\s|[0-9A-Fa-f]{8}\s[BCDRT]\s)$(Win32SymbolPrefix)([^\s\r\n]*)(\r\n|\r|\n)', '$2&#13;&#10;')), '(\n_.*|.*[@\?\$:\. ].*\n|_\n)', ''))" Overwrite="True" Encoding="windows-1250"/>
   </Target>
   <PropertyGroup>
     <BeforeLinkTargets>

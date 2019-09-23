@@ -2,7 +2,7 @@
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <ItemDefinitionGroup>
@@ -27,8 +27,6 @@
       <ClCompile Include="$(ProjectDir)../../../compat/basename.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/fopen.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/memmem.c" />
-      <ClCompile Include="$(ProjectDir)../../../compat/mkdir.c" />
-      <ClCompile Include="$(ProjectDir)../../../compat/nedmalloc/nedmalloc.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/obstack.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/poll/poll.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/pread.c" />
