@@ -96,7 +96,11 @@ static off_t reuse_packfile_offset;
 
 static int use_bitmap_index_default = 1;
 static int use_bitmap_index = -1;
-static int write_bitmap_index;
+static enum {
+	WRITE_BITMAP_FALSE = 0,
+	WRITE_BITMAP_QUIET,
+	WRITE_BITMAP_TRUE,
+} write_bitmap_index;
 static uint16_t write_bitmap_options = BITMAP_OPT_HASH_CACHE;
 
 static int exclude_promisor_objects;
@@ -606,12 +610,12 @@ static int mark_tagged(const char *path, const struct object_id *oid, int flag,
 		       void *cb_data)
 {
 	struct object_id peeled;
-	struct object_entry *entry = packlist_find(&to_pack, oid->hash, NULL);
+	struct object_entry *entry = packlist_find(&to_pack, oid, NULL);
 
 	if (entry)
 		entry->tagged = 1;
 	if (!peel_ref(path, &peeled)) {
-		entry = packlist_find(&to_pack, peeled.hash, NULL);
+		entry = packlist_find(&to_pack, &peeled, NULL);
 		if (entry)
 			entry->tagged = 1;
 	}
@@ -892,7 +896,8 @@ static void write_pack_file(void)
 						 nr_written, oid.hash, offset);
 			close(fd);
 			if (write_bitmap_index) {
-				warning(_(no_split_warning));
+				if (write_bitmap_index != WRITE_BITMAP_QUIET)
+					warning(_(no_split_warning));
 				write_bitmap_index = 0;
 			}
 		}
@@ -996,7 +1001,7 @@ static int have_duplicate_entry(const struct object_id *oid,
 {
 	struct object_entry *entry;
 
-	entry = packlist_find(&to_pack, oid->hash, index_pos);
+	entry = packlist_find(&to_pack, oid, index_pos);
 	if (!entry)
 		return 0;
 
@@ -1176,7 +1181,8 @@ static int add_object_entry(const struct object_id *oid, enum object_type type,
 	if (!want_object_in_pack(oid, exclude, &found_pack, &found_offset)) {
 		/* The pack is missing an object, so it will not have closure */
 		if (write_bitmap_index) {
-			warning(_(no_closure_warning));
+			if (write_bitmap_index != WRITE_BITMAP_QUIET)
+				warning(_(no_closure_warning));
 			write_bitmap_index = 0;
 		}
 		return 0;
@@ -1428,7 +1434,8 @@ static void add_preferred_base(struct object_id *oid)
 	if (window <= num_preferred_base++)
 		return;
 
-	data = read_object_with_reference(oid, tree_type, &size, &tree_oid);
+	data = read_object_with_reference(the_repository, oid,
+					  tree_type, &size, &tree_oid);
 	if (!data)
 		return;
 
@@ -1494,11 +1501,13 @@ static int can_reuse_delta(const unsigned char *base_sha1,
 	if (!base_sha1)
 		return 0;
 
+	oidread(&base_oid, base_sha1);
+
 	/*
 	 * First see if we're already sending the base (or it's explicitly in
 	 * our "excluded" list).
 	 */
-	base = packlist_find(&to_pack, base_sha1, NULL);
+	base = packlist_find(&to_pack, &base_oid, NULL);
 	if (base) {
 		if (!in_same_island(&delta->idx.oid, &base->idx.oid))
 			return 0;
@@ -1511,7 +1520,6 @@ static int can_reuse_delta(const unsigned char *base_sha1,
 	 * even if it was buried too deep in history to make it into the
 	 * packing list.
 	 */
-	oidread(&base_oid, base_sha1);
 	if (thin && bitmap_has_oid_in_uninteresting(bitmap_git, &base_oid)) {
 		if (use_delta_islands) {
 			if (!in_same_island(&delta->idx.oid, &base_oid))
@@ -2571,7 +2579,7 @@ static void add_tag_chain(const struct object_id *oid)
 	 * it was included via bitmaps, we would not have parsed it
 	 * previously).
 	 */
-	if (packlist_find(&to_pack, oid->hash, NULL))
+	if (packlist_find(&to_pack, oid, NULL))
 		return;
 
 	tag = lookup_tag(the_repository, oid);
@@ -2595,7 +2603,7 @@ static int add_ref_tag(const char *path, const struct object_id *oid, int flag, 
 
 	if (starts_with(path, "refs/tags/") && /* is a tag? */
 	    !peel_ref(path, &peeled)    && /* peelable? */
-	    packlist_find(&to_pack, peeled.hash, NULL))      /* object packed? */
+	    packlist_find(&to_pack, &peeled, NULL))      /* object packed? */
 		add_tag_chain(oid);
 	return 0;
 }
@@ -2795,7 +2803,7 @@ static void show_object(struct object *obj, const char *name, void *data)
 		for (p = strchr(name, '/'); p; p = strchr(p + 1, '/'))
 			depth++;
 
-		ent = packlist_find(&to_pack, obj->oid.hash, NULL);
+		ent = packlist_find(&to_pack, &obj->oid, NULL);
 		if (ent && depth > oe_tree_depth(&to_pack, ent))
 			oe_set_tree_depth(&to_pack, ent, depth);
 	}
@@ -2899,7 +2907,7 @@ static int ofscmp(const void *a_, const void *b_)
 		return oidcmp(&a->object->oid, &b->object->oid);
 }
 
-static void add_objects_in_unpacked_packs(struct rev_info *revs)
+static void add_objects_in_unpacked_packs(void)
 {
 	struct packed_git *p;
 	struct in_pack in_pack;
@@ -2922,7 +2930,7 @@ static void add_objects_in_unpacked_packs(struct rev_info *revs)
 
 		for (i = 0; i < p->num_objects; i++) {
 			nth_packed_object_oid(&oid, p, i);
-			o = lookup_unknown_object(oid.hash);
+			o = lookup_unknown_object(&oid);
 			if (!(o->flags & OBJECT_ADDED))
 				mark_in_pack_object(o, p, &in_pack);
 			o->flags |= OBJECT_ADDED;
@@ -3011,7 +3019,7 @@ static int loosened_object_can_be_discarded(const struct object_id *oid,
 	return 1;
 }
 
-static void loosen_unused_packed_objects(struct rev_info *revs)
+static void loosen_unused_packed_objects(void)
 {
 	struct packed_git *p;
 	uint32_t i;
@@ -3026,7 +3034,7 @@ static void loosen_unused_packed_objects(struct rev_info *revs)
 
 		for (i = 0; i < p->num_objects; i++) {
 			nth_packed_object_oid(&oid, p, i);
-			if (!packlist_find(&to_pack, oid.hash, NULL) &&
+			if (!packlist_find(&to_pack, &oid, NULL) &&
 			    !has_sha1_pack_kept_or_nonlocal(&oid) &&
 			    !loosened_object_can_be_discarded(&oid, p->mtime))
 				if (force_object_loose(&oid, p->mtime))
@@ -3134,7 +3142,7 @@ static void get_object_list(int ac, const char **av)
 		return;
 
 	if (use_delta_islands)
-		load_delta_islands(the_repository);
+		load_delta_islands(the_repository, progress);
 
 	if (prepare_revision_walk(&revs))
 		die(_("revision walk setup failed"));
@@ -3158,11 +3166,11 @@ static void get_object_list(int ac, const char **av)
 	}
 
 	if (keep_unreachable)
-		add_objects_in_unpacked_packs(&revs);
+		add_objects_in_unpacked_packs();
 	if (pack_loose_unreachable)
 		add_unreachable_loose_objects();
 	if (unpack_unreachable)
-		loosen_unused_packed_objects(&revs);
+		loosen_unused_packed_objects();
 
 	oid_array_clear(&recent_objects);
 }
@@ -3311,8 +3319,13 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
 			    N_("do not hide commits by grafts"), 0),
 		OPT_BOOL(0, "use-bitmap-index", &use_bitmap_index,
 			 N_("use a bitmap index if available to speed up counting objects")),
-		OPT_BOOL(0, "write-bitmap-index", &write_bitmap_index,
-			 N_("write a bitmap index together with the pack index")),
+		OPT_SET_INT(0, "write-bitmap-index", &write_bitmap_index,
+			    N_("write a bitmap index together with the pack index"),
+			    WRITE_BITMAP_TRUE),
+		OPT_SET_INT_F(0, "write-bitmap-index-quiet",
+			      &write_bitmap_index,
+			      N_("write a bitmap index if possible"),
+			      WRITE_BITMAP_QUIET, PARSE_OPT_HIDDEN),
 		OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
 		{ OPTION_CALLBACK, 0, "missing", NULL, N_("action"),
 		  N_("handling for missing objects"), PARSE_OPT_NONEG,

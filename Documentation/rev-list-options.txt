@@ -182,6 +182,14 @@ explicitly.
 	Pretend as if all objects mentioned by reflogs are listed on the
 	command line as `<commit>`.
 
+--alternate-refs::
+	Pretend as if all objects mentioned as ref tips of alternate
+	repositories were listed on the command line. An alternate
+	repository is any repository whose object directory is specified
+	in `objects/info/alternates`.  The set of included objects may
+	be modified by `core.alternateRefsCommand`, etc. See
+	linkgit:git-config[1].
+
 --single-worktree::
 	By default, all working trees will be examined by the
 	following options when there are more than one (see
@@ -708,6 +716,16 @@ ifdef::git-rev-list[]
 	Only useful with `--objects`; print the object IDs that are not
 	in packs.
 
+--object-names::
+	Only useful with `--objects`; print the names of the object IDs
+	that are found. This is the default behavior.
+
+--no-object-names::
+	Only useful with `--objects`; does not print the names of the object
+	IDs that are found. This inverts `--object-names`. This flag allows
+	the output to be more easily parsed by commands such as
+	linkgit:git-cat-file[1].
+
 --filter=<filter-spec>::
 	Only useful with one of the `--objects*`; omits objects (usually
 	blobs) from the list of printed objects.  The '<filter-spec>'
@@ -725,9 +743,6 @@ specification contained in the blob (or blob-expression) '<blob-ish>'
 to omit blobs that would not be not required for a sparse checkout on
 the requested refs.
 +
-The form '--filter=sparse:path=<path>' similarly uses a sparse-checkout
-specification contained in <path>.
-+
 The form '--filter=tree:<depth>' omits all blobs and trees whose depth
 from the root tree is >= <depth> (minimum depth if an object is located
 at multiple depths in the commits traversed). <depth>=0 will not include
@@ -737,6 +752,10 @@ tree and blobs which are referenced directly by a commit reachable from
 <commit> or an explicitly-given object. <depth>=2 is like <depth>=1
 while also including trees and blobs one more level removed from an
 explicitly-given commit or tree.
++
+Note that the form '--filter=sparse:path=<path>' that wants to read
+from an arbitrary path on the filesystem has been dropped for security
+reasons.
 
 --no-filter::
 	Turn off any previous `--filter=` argument.

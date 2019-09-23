@@ -1673,7 +1673,10 @@ static void emit_hunk_header(struct emit_callback *ecbdata,
 	if (ecbdata->opt->flags.dual_color_diffed_diffs)
 		strbuf_addstr(&msgbuf, reverse);
 	strbuf_addstr(&msgbuf, frag);
-	strbuf_add(&msgbuf, line, ep - line);
+	if (ecbdata->opt->flags.suppress_hunk_header_line_count)
+		strbuf_add(&msgbuf, atat, sizeof(atat));
+	else
+		strbuf_add(&msgbuf, line, ep - line);
 	strbuf_addstr(&msgbuf, reset);
 
 	/*
@@ -4206,6 +4209,8 @@ static void run_external_diff(const char *pgm,
 	argv_array_pushf(&env, "GIT_DIFF_PATH_COUNTER=%d", ++o->diff_path_counter);
 	argv_array_pushf(&env, "GIT_DIFF_PATH_TOTAL=%d", q->nr);
 
+	diff_free_filespec_data(one);
+	diff_free_filespec_data(two);
 	if (run_command_v_opt_cd_env(argv.argv, RUN_USING_SHELL, NULL, env.argv))
 		die(_("external diff died, stopping at %s"), name);
 
@@ -5211,9 +5216,11 @@ static int diff_opt_unified(const struct option *opt,
 
 	BUG_ON_OPT_NEG(unset);
 
-	options->context = strtol(arg, &s, 10);
-	if (*s)
-		return error(_("%s expects a numerical value"), "--unified");
+	if (arg) {
+		options->context = strtol(arg, &s, 10);
+		if (*s)
+			return error(_("%s expects a numerical value"), "--unified");
+	}
 	enable_patch_output(&options->output_format);
 
 	return 0;
@@ -5272,7 +5279,7 @@ static void prep_parse_options(struct diff_options *options)
 			  DIFF_FORMAT_PATCH, DIFF_FORMAT_NO_OUTPUT),
 		OPT_CALLBACK_F('U', "unified", options, N_("<n>"),
 			       N_("generate diffs with <n> lines context"),
-			       PARSE_OPT_NONEG, diff_opt_unified),
+			       PARSE_OPT_NONEG | PARSE_OPT_OPTARG, diff_opt_unified),
 		OPT_BOOL('W', "function-context", &options->flags.funccontext,
 			 N_("generate diffs with <n> lines context")),
 		OPT_BIT_F(0, "raw", &options->output_format,
@@ -5352,7 +5359,7 @@ static void prep_parse_options(struct diff_options *options)
 			     N_("show the given source prefix instead of \"a/\""),
 			     PARSE_OPT_NONEG),
 		OPT_STRING_F(0, "dst-prefix", &options->b_prefix, N_("<prefix>"),
-			     N_("show the given source prefix instead of \"b/\""),
+			     N_("show the given destination prefix instead of \"b/\""),
 			     PARSE_OPT_NONEG),
 		OPT_CALLBACK_F(0, "line-prefix", options, N_("<prefix>"),
 			       N_("prepend an additional prefix to every line of output"),
@@ -5453,13 +5460,13 @@ static void prep_parse_options(struct diff_options *options)
 			       N_("equivalent to --word-diff=color --word-diff-regex=<regex>"),
 			       PARSE_OPT_NONEG | PARSE_OPT_OPTARG, diff_opt_color_words),
 		OPT_CALLBACK_F(0, "color-moved", options, N_("<mode>"),
-			       N_("move lines of code are colored differently"),
+			       N_("moved lines of code are colored differently"),
 			       PARSE_OPT_OPTARG, diff_opt_color_moved),
 		OPT_CALLBACK_F(0, "color-moved-ws", options, N_("<mode>"),
 			       N_("how white spaces are ignored in --color-moved"),
 			       0, diff_opt_color_moved_ws),
 
-		OPT_GROUP(N_("Diff other options")),
+		OPT_GROUP(N_("Other diff options")),
 		OPT_CALLBACK_F(0, "relative", options, N_("<prefix>"),
 			       N_("when run from subdir, exclude changes outside and show relative paths"),
 			       PARSE_OPT_NONEG | PARSE_OPT_OPTARG,
@@ -5988,6 +5995,22 @@ static int remove_space(char *line, int len)
 	return dst - line;
 }
 
+void flush_one_hunk(struct object_id *result, git_SHA_CTX *ctx)
+{
+	unsigned char hash[GIT_MAX_RAWSZ];
+	unsigned short carry = 0;
+	int i;
+
+	git_SHA1_Final(hash, ctx);
+	git_SHA1_Init(ctx);
+	/* 20-byte sum, with carry */
+	for (i = 0; i < GIT_SHA1_RAWSZ; ++i) {
+		carry += result->hash[i] + hash[i];
+		result->hash[i] = carry;
+		carry >>= 8;
+	}
+}
+
 static void patch_id_consume(void *priv, char *line, unsigned long len)
 {
 	struct patch_id_t *data = priv;
@@ -6012,8 +6035,8 @@ static void patch_id_add_mode(git_SHA_CTX *ctx, unsigned mode)
 	git_SHA1_Update(ctx, buf, len);
 }
 
-/* returns 0 upon success, and writes result into sha1 */
-static int diff_get_patch_id(struct diff_options *options, struct object_id *oid, int diff_header_only)
+/* returns 0 upon success, and writes result into oid */
+static int diff_get_patch_id(struct diff_options *options, struct object_id *oid, int diff_header_only, int stable)
 {
 	struct diff_queue_struct *q = &diff_queued_diff;
 	int i;
@@ -6023,6 +6046,7 @@ static int diff_get_patch_id(struct diff_options *options, struct object_id *oid
 	git_SHA1_Init(&ctx);
 	memset(&data, 0, sizeof(struct patch_id_t));
 	data.ctx = &ctx;
+	oidclr(oid);
 
 	for (i = 0; i < q->nr; i++) {
 		xpparam_t xpp;
@@ -6098,17 +6122,22 @@ static int diff_get_patch_id(struct diff_options *options, struct object_id *oid
 				  patch_id_consume, &data, &xpp, &xecfg))
 			return error("unable to generate patch-id diff for %s",
 				     p->one->path);
+
+		if (stable)
+			flush_one_hunk(oid, &ctx);
 	}
 
-	git_SHA1_Final(oid->hash, &ctx);
+	if (!stable)
+		git_SHA1_Final(oid->hash, &ctx);
+
 	return 0;
 }
 
-int diff_flush_patch_id(struct diff_options *options, struct object_id *oid, int diff_header_only)
+int diff_flush_patch_id(struct diff_options *options, struct object_id *oid, int diff_header_only, int stable)
 {
 	struct diff_queue_struct *q = &diff_queued_diff;
 	int i;
-	int result = diff_get_patch_id(options, oid, diff_header_only);
+	int result = diff_get_patch_id(options, oid, diff_header_only, stable);
 
 	for (i = 0; i < q->nr; i++)
 		diff_free_filepair(q->queue[i]);
