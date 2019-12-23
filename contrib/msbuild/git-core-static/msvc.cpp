@@ -938,25 +938,25 @@ struct passwd *getpwuid(int uid)
 int symlink(const char * oldpath, const char * newpath)
 {
 	std::error_code code;
-	auto poldpath = std::experimental::filesystem::u8path(oldpath);
-	auto pnewpath = std::experimental::filesystem::u8path(newpath);
-	if (std::experimental::filesystem::is_directory(poldpath))
+	auto poldpath = std::filesystem::u8path(oldpath);
+	auto pnewpath = std::filesystem::u8path(newpath);
+	if (std::filesystem::is_directory(poldpath))
 	{
-		std::experimental::filesystem::create_directory_symlink(poldpath, pnewpath, code);
+		std::filesystem::create_directory_symlink(poldpath, pnewpath, code);
 	}
 	else
 	{
-		std::experimental::filesystem::create_symlink(poldpath, pnewpath, code);
+		std::filesystem::create_symlink(poldpath, pnewpath, code);
 	}
 	return code.value();
 }
 
 int readlink(const char *path, char *buf, size_t bufsiz)
 {
-	auto lnk = std::experimental::filesystem::u8path(path);
-	if (std::experimental::filesystem::is_symlink(lnk))
+	auto lnk = std::filesystem::u8path(path);
+	if (std::filesystem::is_symlink(lnk))
 	{
-		return std::experimental::filesystem::read_symlink(lnk).u8string().copy(buf, bufsiz);
+		return std::filesystem::read_symlink(lnk).u8string().copy(buf, bufsiz);
 	}
 	return -1;
 }
@@ -964,7 +964,7 @@ int readlink(const char *path, char *buf, size_t bufsiz)
 int link(const char *oldpath, const char *newpath)
 {
 	std::error_code code;
-	std::experimental::filesystem::create_hard_link(std::experimental::filesystem::u8path(oldpath), std::experimental::filesystem::u8path(newpath), code);
+	std::filesystem::create_hard_link(std::filesystem::u8path(oldpath), std::filesystem::u8path(newpath), code);
 	return code.value();
 }
 
