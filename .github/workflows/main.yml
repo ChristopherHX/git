@@ -18,7 +18,7 @@ jobs:
         git remote add upstream https://github.com/git/git.git
         git fetch upstream
         git merge upstream/master
-        git remote set-url origin }https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
+        git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
         git push origin
         ./generate-cmdlist.sh
     - name: Upload command-list.h for Windows
