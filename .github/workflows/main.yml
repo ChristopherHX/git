@@ -17,7 +17,7 @@ jobs:
       run: |
         git remote add upstream https://github.com/git/git.git
         git fetch upstream
-        git config --global user.email CI@local"
+        git config --global user.email "CI@local"
         git config --global user.name "CI Bot"
         git merge upstream/master
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
