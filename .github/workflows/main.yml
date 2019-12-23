@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    # rebase and rebuild daily
+    - cron:  '0 0 * * *'
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - uses: actions/checkout@v1
+      with:
+        repository: https://github.com/madler/zlib.git
+        ref: master
+    - uses: actions/checkout@v1
+      with:
+        repository: https://github.com/curl/curl.git
+        ref: master
+    - uses: actions/checkout@v1
+      with:
+        repository: https://github.com/ChristopherHX/gettext-msvc.git
+        ref: master
+    - name: Build
+      working-directory: ${{ github.workspace }}\contrib\msbuild\
+      run: powershell -Command "msbuild /p:Configuration=Release /p:Platform=x64 /p:VersionsCode=$(git describe --abbrev=0) /p:CURLDIR=${{ github.workspace }}\..\curl /p:ZLIBDIR=${{ github.workspace }}\..\zlib /p:GETTEXTDIR=${{ github.workspace }}\..\gettext-msvc\gettext-0.19.8 /p:LIBICONVDIR=${{ github.workspace }}\..\gettext-msvc\libiconv-1.16"
+    - uses: actions/upload-artifact@master
+      with:
+        name: Git(nano)
+        path: ${{ github.workspace }}/contrib/msbuild/bin
