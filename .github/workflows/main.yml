@@ -23,7 +23,7 @@ jobs:
         git merge upstream/master
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
         git push origin master:master || :
-        ./generate-cmdlist.sh > command-list.h
+        make command-list.h
     - name: Upload command-list.h for Windows
       uses: actions/upload-artifact@v1
       with:
