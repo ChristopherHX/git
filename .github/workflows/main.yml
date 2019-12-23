@@ -34,9 +34,9 @@ jobs:
       with:
         ref: master
     - name: Grab command-list.h for Windows
-        uses: actions/download-artifact@v1
-        with:
-          name: Commandlist
+      uses: actions/download-artifact@v1
+      with:
+        name: Commandlist
     - name: Move command-list.h to right folder
       run: powershell -Command "mv Commandlist\command-list.h command-list.h"
     - name: Get zlib
