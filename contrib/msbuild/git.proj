@@ -15,7 +15,7 @@
         <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=fast-import</Properties>
         </ProjectToBuild>
-        <ProjectToBuild Include="git-command/git-command.vcxproj">
+        <!-- <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=http-backend</Properties>
         </ProjectToBuild>
         <ProjectToBuild Include="git-command/git-command.vcxproj">
@@ -26,13 +26,13 @@
         </ProjectToBuild>
         <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=imap-send</Properties>
-        </ProjectToBuild>
+        </ProjectToBuild> -->
         <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=remote-curl</Properties>
         </ProjectToBuild>
-        <ProjectToBuild Include="git-command/git-command.vcxproj">
+        <!-- <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=remote-testsvn</Properties>
-        </ProjectToBuild>
+        </ProjectToBuild> -->
         <ProjectToBuild Include="git-command/git-command.vcxproj">
             <Properties>BuildProjectReferences=false;Command=shell;</Properties>
         </ProjectToBuild>

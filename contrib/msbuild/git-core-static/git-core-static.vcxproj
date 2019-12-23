@@ -31,7 +31,6 @@
       <ClCompile Include="$(ProjectDir)../../../compat/obstack.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/poll/poll.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/pread.c" />
-      <ClCompile Include="$(ProjectDir)../../../compat/qsort.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/qsort_s.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/regex/regex.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/snprintf.c" />
