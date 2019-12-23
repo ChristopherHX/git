@@ -6,12 +6,39 @@ on:
     # rebase and rebuild daily
     - cron:  '0 0 * * *'
 jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - name: Update Upstream
+      working-directory: ${{ github.workspace }}
+      run: |
+        git remote add upstream https://github.com/git/git.git
+        git fetch upstream
+        git merge upstream/master
+        git remote set-url origin }https://ChristopherHX:${{ secrets.git }@github.com/ChristopherHX/git.git
+        git push origin
+        ./generate-cmdlist.sh
+    - name: Upload command-list.h for Windows
+      uses: actions/upload-artifact@v1
+      with:
+        name: Commandlist
+        path: command-list.h
   build:
+    needs: update
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v1
       with:
         ref: master
+    - name: Grab command-list.h for Windows
+        uses: actions/download-artifact@v1
+        with:
+          name: Commandlist
+    - name: Move command-list.h to right folder
+      run: powershell -Command "mv Commandlist\command-list.h command-list.h"
     - name: Get zlib
       working-directory: ${{ github.workspace }}\..
       run: git clone https://github.com/madler/zlib.git
