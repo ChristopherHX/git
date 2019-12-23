@@ -150,7 +150,7 @@ static unsigned long empty_auth_useless =
 
 static struct curl_slist *pragma_header;
 static struct curl_slist *no_pragma_header;
-static struct curl_slist *extra_http_headers;
+static struct string_list extra_http_headers = STRING_LIST_INIT_DUP;
 
 static struct active_request_slot *active_queue_head;
 
@@ -414,11 +414,9 @@ static int http_options(const char *var, const char *value, void *cb)
 		if (!value) {
 			return config_error_nonbool(var);
 		} else if (!*value) {
-			curl_slist_free_all(extra_http_headers);
-			extra_http_headers = NULL;
+			string_list_clear(&extra_http_headers, 0);
 		} else {
-			extra_http_headers =
-				curl_slist_append(extra_http_headers, value);
+			string_list_append(&extra_http_headers, value);
 		}
 		return 0;
 	}
@@ -513,9 +511,11 @@ static void set_proxyauth_name_password(CURL *result)
 #else
 		struct strbuf s = STRBUF_INIT;
 
-		strbuf_addstr_urlencode(&s, proxy_auth.username, 1);
+		strbuf_addstr_urlencode(&s, proxy_auth.username,
+					is_rfc3986_unreserved);
 		strbuf_addch(&s, ':');
-		strbuf_addstr_urlencode(&s, proxy_auth.password, 1);
+		strbuf_addstr_urlencode(&s, proxy_auth.password,
+					is_rfc3986_unreserved);
 		curl_proxyuserpwd = strbuf_detach(&s, NULL);
 		curl_easy_setopt(result, CURLOPT_PROXYUSERPWD, curl_proxyuserpwd);
 #endif
@@ -1073,6 +1073,7 @@ void http_init(struct remote *remote, const char *url, int proactive_auth)
 
 	git_config(urlmatch_config_entry, &config);
 	free(normalized_url);
+	string_list_clear(&config.vars, 1);
 
 #if LIBCURL_VERSION_NUM >= 0x073800
 	if (http_ssl_backend) {
@@ -1199,8 +1200,7 @@ void http_cleanup(void)
 #endif
 	curl_global_cleanup();
 
-	curl_slist_free_all(extra_http_headers);
-	extra_http_headers = NULL;
+	string_list_clear(&extra_http_headers, 0);
 
 	curl_slist_free_all(pragma_header);
 	pragma_header = NULL;
@@ -1624,10 +1624,11 @@ int run_one_slot(struct active_request_slot *slot,
 
 struct curl_slist *http_copy_default_headers(void)
 {
-	struct curl_slist *headers = NULL, *h;
+	struct curl_slist *headers = NULL;
+	const struct string_list_item *item;
 
-	for (h = extra_http_headers; h; h = h->next)
-		headers = curl_slist_append(headers, h->data);
+	for_each_string_list_item(item, &extra_http_headers)
+		headers = curl_slist_append(headers, item->string);
 
 	return headers;
 }

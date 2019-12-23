@@ -414,6 +414,7 @@ extern struct index_state the_index;
 #define add_file_to_cache(path, flags) add_file_to_index(&the_index, (path), (flags))
 #define chmod_cache_entry(ce, flip) chmod_index_entry(&the_index, (ce), (flip))
 #define refresh_cache(flags) refresh_index(&the_index, (flags), NULL, NULL, NULL)
+#define refresh_and_write_cache(refresh_flags, write_flags, gentle) repo_refresh_and_write_index(the_repository, (refresh_flags), (write_flags), (gentle), NULL, NULL, NULL)
 #define ce_match_stat(ce, st, options) ie_match_stat(&the_index, (ce), (st), (options))
 #define ce_modified(ce, st, options) ie_modified(&the_index, (ce), (st), (options))
 #define cache_dir_exists(name, namelen) index_dir_exists(&the_index, (name), (namelen))
@@ -631,10 +632,46 @@ int daemonize(void);
 
 #define alloc_nr(x) (((x)+16)*3/2)
 
-/*
- * Realloc the buffer pointed at by variable 'x' so that it can hold
- * at least 'nr' entries; the number of entries currently allocated
- * is 'alloc', using the standard growing factor alloc_nr() macro.
+/**
+ * Dynamically growing an array using realloc() is error prone and boring.
+ *
+ * Define your array with:
+ *
+ * - a pointer (`item`) that points at the array, initialized to `NULL`
+ *   (although please name the variable based on its contents, not on its
+ *   type);
+ *
+ * - an integer variable (`alloc`) that keeps track of how big the current
+ *   allocation is, initialized to `0`;
+ *
+ * - another integer variable (`nr`) to keep track of how many elements the
+ *   array currently has, initialized to `0`.
+ *
+ * Then before adding `n`th element to the item, call `ALLOC_GROW(item, n,
+ * alloc)`.  This ensures that the array can hold at least `n` elements by
+ * calling `realloc(3)` and adjusting `alloc` variable.
+ *
+ * ------------
+ * sometype *item;
+ * size_t nr;
+ * size_t alloc
+ *
+ * for (i = 0; i < nr; i++)
+ * 	if (we like item[i] already)
+ * 		return;
+ *
+ * // we did not like any existing one, so add one
+ * ALLOC_GROW(item, nr + 1, alloc);
+ * item[nr++] = value you like;
+ * ------------
+ *
+ * You are responsible for updating the `nr` variable.
+ *
+ * If you need to specify the number of elements to allocate explicitly
+ * then use the macro `REALLOC_ARRAY(item, alloc)` instead of `ALLOC_GROW`.
+ *
+ * Consider using ALLOC_GROW_BY instead of ALLOC_GROW as it has some
+ * added niceties.
  *
  * DO NOT USE any expression with side-effect for 'x', 'nr', or 'alloc'.
  */
@@ -646,6 +683,25 @@ int daemonize(void);
 			else \
 				alloc = alloc_nr(alloc); \
 			REALLOC_ARRAY(x, alloc); \
+		} \
+	} while (0)
+
+/*
+ * Similar to ALLOC_GROW but handles updating of the nr value and
+ * zeroing the bytes of the newly-grown array elements.
+ *
+ * DO NOT USE any expression with side-effect for any of the
+ * arguments.
+ */
+#define ALLOC_GROW_BY(x, nr, increase, alloc) \
+	do { \
+		if (increase) { \
+			size_t new_nr = nr + (increase); \
+			if (new_nr < nr) \
+				BUG("negative growth in ALLOC_GROW_BY"); \
+			ALLOC_GROW(x, new_nr, alloc); \
+			memset((x) + nr, 0, sizeof(*(x)) * (increase)); \
+			nr = new_nr; \
 		} \
 	} while (0)
 
@@ -724,6 +780,19 @@ struct cache_entry *index_file_exists(struct index_state *istate, const char *na
  * index_name_pos(&index, "g", 1) -> -5
  */
 int index_name_pos(const struct index_state *, const char *name, int namelen);
+
+/*
+ * Some functions return the negative complement of an insert position when a
+ * precise match was not found but a position was found where the entry would
+ * need to be inserted. This helper protects that logic from any integer
+ * underflow.
+ */
+static inline int index_pos_to_insert_pos(uintmax_t pos)
+{
+	if (pos > INT_MAX)
+		die("overflow: -1 - %"PRIuMAX, pos);
+	return -1 - (int)pos;
+}
 
 #define ADD_CACHE_OK_TO_ADD 1		/* Ok to add */
 #define ADD_CACHE_OK_TO_REPLACE 2	/* Ok to replace file/directory */
@@ -812,6 +881,23 @@ void fill_stat_cache_info(struct index_state *istate, struct cache_entry *ce, st
 #define REFRESH_IN_PORCELAIN	0x0020	/* user friendly output, not "needs update" */
 #define REFRESH_PROGRESS	0x0040  /* show progress bar if stderr is tty */
 int refresh_index(struct index_state *, unsigned int flags, const struct pathspec *pathspec, char *seen, const char *header_msg);
+/*
+ * Refresh the index and write it to disk.
+ *
+ * 'refresh_flags' is passed directly to 'refresh_index()', while
+ * 'COMMIT_LOCK | write_flags' is passed to 'write_locked_index()', so
+ * the lockfile is always either committed or rolled back.
+ *
+ * If 'gentle' is passed, errors locking the index are ignored.
+ *
+ * Return 1 if refreshing the index returns an error, -1 if writing
+ * the index to disk fails, 0 on success.
+ *
+ * Note that if refreshing the index returns an error, we still write
+ * out the index (unless locking fails).
+ */
+int repo_refresh_and_write_index(struct repository*, unsigned int refresh_flags, unsigned int write_flags, int gentle, const struct pathspec *, char *seen, const char *header_msg);
+
 struct cache_entry *refresh_cache_entry(struct index_state *, struct cache_entry *, unsigned int);
 
 void set_alternate_index_output(const char *);
@@ -937,8 +1023,6 @@ extern int grafts_replace_parents;
 #define GIT_REPO_VERSION 0
 #define GIT_REPO_VERSION_READ 1
 extern int repository_format_precious_objects;
-extern char *repository_format_partial_clone;
-extern const char *core_partial_clone_filter_default;
 extern int repository_format_worktree_config;
 
 /*
@@ -1029,7 +1113,6 @@ const char *repo_find_unique_abbrev(struct repository *r, const struct object_id
 int repo_find_unique_abbrev_r(struct repository *r, char *hex, const struct object_id *oid, int len);
 #define find_unique_abbrev_r(hex, oid, len) repo_find_unique_abbrev_r(the_repository, hex, oid, len)
 
-extern const unsigned char null_sha1[GIT_MAX_RAWSZ];
 extern const struct object_id null_oid;
 
 static inline int hashcmp(const unsigned char *sha1, const unsigned char *sha2)
@@ -1064,14 +1147,9 @@ static inline int oideq(const struct object_id *oid1, const struct object_id *oi
 	return hasheq(oid1->hash, oid2->hash);
 }
 
-static inline int is_null_sha1(const unsigned char *sha1)
-{
-	return hasheq(sha1, null_sha1);
-}
-
 static inline int is_null_oid(const struct object_id *oid)
 {
-	return hasheq(oid->hash, null_sha1);
+	return oideq(oid, &null_oid);
 }
 
 static inline void hashcpy(unsigned char *sha_dst, const unsigned char *sha_src)
@@ -1406,7 +1484,8 @@ int get_oid_hex(const char *hex, struct object_id *sha1);
 int hex_to_bytes(unsigned char *binary, const char *hex, size_t len);
 
 /*
- * Convert a binary hash to its hex equivalent. The `_r` variant is reentrant,
+ * Convert a binary hash in "unsigned char []" or an object name in
+ * "struct object_id *" to its hex equivalent. The `_r` variant is reentrant,
  * and writes the NUL-terminated output to the buffer `out`, which must be at
  * least `GIT_MAX_HEXSZ + 1` bytes, and returns a pointer to out for
  * convenience.
@@ -1414,13 +1493,12 @@ int hex_to_bytes(unsigned char *binary, const char *hex, size_t len);
  * The non-`_r` variant returns a static buffer, but uses a ring of 4
  * buffers, making it safe to make multiple calls for a single statement, like:
  *
- *   printf("%s -> %s", sha1_to_hex(one), sha1_to_hex(two));
+ *   printf("%s -> %s", hash_to_hex(one), hash_to_hex(two));
+ *   printf("%s -> %s", oid_to_hex(one), oid_to_hex(two));
  */
 char *hash_to_hex_algop_r(char *buffer, const unsigned char *hash, const struct git_hash_algo *);
-char *sha1_to_hex_r(char *out, const unsigned char *sha1);
 char *oid_to_hex_r(char *out, const struct object_id *oid);
 char *hash_to_hex_algop(const unsigned char *hash, const struct git_hash_algo *);	/* static buffer result! */
-char *sha1_to_hex(const unsigned char *sha1);						/* same static buffer */
 char *hash_to_hex(const unsigned char *hash);						/* same static buffer */
 char *oid_to_hex(const struct object_id *oid);						/* same static buffer */
 
@@ -1516,8 +1594,7 @@ struct date_mode {
 struct date_mode *date_mode_from_type(enum date_mode_type type);
 
 const char *show_date(timestamp_t time, int timezone, const struct date_mode *mode);
-void show_date_relative(timestamp_t time, const struct timeval *now,
-			struct strbuf *timebuf);
+void show_date_relative(timestamp_t time, struct strbuf *timebuf);
 void show_date_human(timestamp_t time, int tz, const struct timeval *now,
 			struct strbuf *timebuf);
 int parse_date(const char *date, struct strbuf *out);
@@ -1526,7 +1603,7 @@ int parse_expiry_date(const char *date, timestamp_t *timestamp);
 void datestamp(struct strbuf *out);
 #define approxidate(s) approxidate_careful((s), NULL)
 timestamp_t approxidate_careful(const char *, int *);
-timestamp_t approxidate_relative(const char *date, const struct timeval *now);
+timestamp_t approxidate_relative(const char *date);
 void parse_date_format(const char *format, struct date_mode *mode);
 int date_overflows(timestamp_t date);
 

@@ -9,7 +9,11 @@
 #include "sha1-lookup.h"
 #include "commit-slab.h"
 
-#define CUTOFF_DATE_SLOP 86400 /* one day */
+/*
+ * One day.  See the 'name a rev shortly after epoch' test in t6120 when
+ * changing this value
+ */
+#define CUTOFF_DATE_SLOP 86400
 
 typedef struct rev_name {
 	const char *tip_name;
@@ -157,10 +161,10 @@ static const char *name_ref_abbrev(const char *refname, int shorten_unambiguous)
 {
 	if (shorten_unambiguous)
 		refname = shorten_unambiguous_ref(refname, 0);
-	else if (starts_with(refname, "refs/heads/"))
-		refname = refname + 11;
-	else if (starts_with(refname, "refs/"))
-		refname = refname + 5;
+	else if (skip_prefix(refname, "refs/heads/", &refname))
+		; /* refname already advanced */
+	else
+		skip_prefix(refname, "refs/", &refname);
 	return refname;
 }
 
@@ -481,8 +485,13 @@ int cmd_name_rev(int argc, const char **argv, const char *prefix)
 		add_object_array(object, *argv, &revs);
 	}
 
-	if (cutoff)
-		cutoff = cutoff - CUTOFF_DATE_SLOP;
+	if (cutoff) {
+		/* check for undeflow */
+		if (cutoff > TIME_MIN + CUTOFF_DATE_SLOP)
+			cutoff = cutoff - CUTOFF_DATE_SLOP;
+		else
+			cutoff = TIME_MIN;
+	}
 	for_each_ref(name_ref, &data);
 
 	if (transform_stdin) {

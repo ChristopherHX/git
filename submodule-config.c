@@ -38,24 +38,28 @@ enum lookup_type {
 };
 
 static int config_path_cmp(const void *unused_cmp_data,
-			   const void *entry,
-			   const void *entry_or_key,
+			   const struct hashmap_entry *eptr,
+			   const struct hashmap_entry *entry_or_key,
 			   const void *unused_keydata)
 {
-	const struct submodule_entry *a = entry;
-	const struct submodule_entry *b = entry_or_key;
+	const struct submodule_entry *a, *b;
+
+	a = container_of(eptr, const struct submodule_entry, ent);
+	b = container_of(entry_or_key, const struct submodule_entry, ent);
 
 	return strcmp(a->config->path, b->config->path) ||
 	       !oideq(&a->config->gitmodules_oid, &b->config->gitmodules_oid);
 }
 
 static int config_name_cmp(const void *unused_cmp_data,
-			   const void *entry,
-			   const void *entry_or_key,
+			   const struct hashmap_entry *eptr,
+			   const struct hashmap_entry *entry_or_key,
 			   const void *unused_keydata)
 {
-	const struct submodule_entry *a = entry;
-	const struct submodule_entry *b = entry_or_key;
+	const struct submodule_entry *a, *b;
+
+	a = container_of(eptr, const struct submodule_entry, ent);
+	b = container_of(entry_or_key, const struct submodule_entry, ent);
 
 	return strcmp(a->config->name, b->config->name) ||
 	       !oideq(&a->config->gitmodules_oid, &b->config->gitmodules_oid);
@@ -95,12 +99,12 @@ static void submodule_cache_clear(struct submodule_cache *cache)
 	 * allocation of struct submodule entries. Each is allocated by
 	 * their .gitmodules blob sha1 and submodule name.
 	 */
-	hashmap_iter_init(&cache->for_name, &iter);
-	while ((entry = hashmap_iter_next(&iter)))
+	hashmap_for_each_entry(&cache->for_name, &iter, entry,
+				ent /* member name */)
 		free_one_config(entry);
 
-	hashmap_free(&cache->for_path, 1);
-	hashmap_free(&cache->for_name, 1);
+	hashmap_free_entries(&cache->for_path, struct submodule_entry, ent);
+	hashmap_free_entries(&cache->for_name, struct submodule_entry, ent);
 	cache->initialized = 0;
 	cache->gitmodules_read = 0;
 }
@@ -123,9 +127,9 @@ static void cache_put_path(struct submodule_cache *cache,
 	unsigned int hash = hash_oid_string(&submodule->gitmodules_oid,
 					    submodule->path);
 	struct submodule_entry *e = xmalloc(sizeof(*e));
-	hashmap_entry_init(e, hash);
+	hashmap_entry_init(&e->ent, hash);
 	e->config = submodule;
-	hashmap_put(&cache->for_path, e);
+	hashmap_put(&cache->for_path, &e->ent);
 }
 
 static void cache_remove_path(struct submodule_cache *cache,
@@ -135,9 +139,9 @@ static void cache_remove_path(struct submodule_cache *cache,
 					    submodule->path);
 	struct submodule_entry e;
 	struct submodule_entry *removed;
-	hashmap_entry_init(&e, hash);
+	hashmap_entry_init(&e.ent, hash);
 	e.config = submodule;
-	removed = hashmap_remove(&cache->for_path, &e, NULL);
+	removed = hashmap_remove_entry(&cache->for_path, &e, ent, NULL);
 	free(removed);
 }
 
@@ -147,9 +151,9 @@ static void cache_add(struct submodule_cache *cache,
 	unsigned int hash = hash_oid_string(&submodule->gitmodules_oid,
 					    submodule->name);
 	struct submodule_entry *e = xmalloc(sizeof(*e));
-	hashmap_entry_init(e, hash);
+	hashmap_entry_init(&e->ent, hash);
 	e->config = submodule;
-	hashmap_add(&cache->for_name, e);
+	hashmap_add(&cache->for_name, &e->ent);
 }
 
 static const struct submodule *cache_lookup_path(struct submodule_cache *cache,
@@ -163,10 +167,10 @@ static const struct submodule *cache_lookup_path(struct submodule_cache *cache,
 	oidcpy(&key_config.gitmodules_oid, gitmodules_oid);
 	key_config.path = path;
 
-	hashmap_entry_init(&key, hash);
+	hashmap_entry_init(&key.ent, hash);
 	key.config = &key_config;
 
-	entry = hashmap_get(&cache->for_path, &key, NULL);
+	entry = hashmap_get_entry(&cache->for_path, &key, ent, NULL);
 	if (entry)
 		return entry->config;
 	return NULL;
@@ -183,10 +187,10 @@ static struct submodule *cache_lookup_name(struct submodule_cache *cache,
 	oidcpy(&key_config.gitmodules_oid, gitmodules_oid);
 	key_config.name = name;
 
-	hashmap_entry_init(&key, hash);
+	hashmap_entry_init(&key.ent, hash);
 	key.config = &key_config;
 
-	entry = hashmap_get(&cache->for_name, &key, NULL);
+	entry = hashmap_get_entry(&cache->for_name, &key, ent, NULL);
 	if (entry)
 		return entry->config;
 	return NULL;
@@ -405,6 +409,13 @@ struct parse_config_parameter {
 	int overwrite;
 };
 
+/*
+ * Parse a config item from .gitmodules.
+ *
+ * This does not handle submodule-related configuration from the main
+ * config store (.git/config, etc).  Callers are responsible for
+ * checking for overrides in the main config store when appropriate.
+ */
 static int parse_config(const char *var, const char *value, void *data)
 {
 	struct parse_config_parameter *me = data;
@@ -482,8 +493,9 @@ static int parse_config(const char *var, const char *value, void *data)
 			warn_multiple_config(me->treeish_name, submodule->name,
 					     "update");
 		else if (parse_submodule_update_strategy(value,
-			 &submodule->update_strategy) < 0)
-				die(_("invalid value for %s"), var);
+			 &submodule->update_strategy) < 0 ||
+			 submodule->update_strategy.type == SM_UPDATE_COMMAND)
+			die(_("invalid value for %s"), var);
 	} else if (!strcmp(item.buf, "shallow")) {
 		if (!me->overwrite && submodule->recommend_shallow != -1)
 			warn_multiple_config(me->treeish_name, submodule->name,
@@ -550,7 +562,9 @@ static const struct submodule *config_from(struct submodule_cache *cache,
 		struct hashmap_iter iter;
 		struct submodule_entry *entry;
 
-		entry = hashmap_iter_first(&cache->for_name, &iter);
+		entry = hashmap_iter_first_entry(&cache->for_name, &iter,
+						struct submodule_entry,
+						ent /* member name */);
 		if (!entry)
 			return NULL;
 		return entry->config;
@@ -612,7 +626,7 @@ static void submodule_cache_check_init(struct repository *repo)
 
 /*
  * Note: This function is private for a reason, the '.gitmodules' file should
- * not be used as as a mechanism to retrieve arbitrary configuration stored in
+ * not be used as a mechanism to retrieve arbitrary configuration stored in
  * the repository.
  *
  * Runs the provided config function on the '.gitmodules' file found in the

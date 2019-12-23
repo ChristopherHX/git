@@ -109,31 +109,35 @@ commit $head1
 EOF
 
 # we don't test relative here
-test_format author %an%n%ae%n%ad%n%aD%n%at <<EOF
+test_format author %an%n%ae%n%al%n%ad%n%aD%n%at <<EOF
 commit $head2
-A U Thor
-author@example.com
+$GIT_AUTHOR_NAME
+$GIT_AUTHOR_EMAIL
+$TEST_AUTHOR_LOCALNAME
 Thu Apr 7 15:13:13 2005 -0700
 Thu, 7 Apr 2005 15:13:13 -0700
 1112911993
 commit $head1
-A U Thor
-author@example.com
+$GIT_AUTHOR_NAME
+$GIT_AUTHOR_EMAIL
+$TEST_AUTHOR_LOCALNAME
 Thu Apr 7 15:13:13 2005 -0700
 Thu, 7 Apr 2005 15:13:13 -0700
 1112911993
 EOF
 
-test_format committer %cn%n%ce%n%cd%n%cD%n%ct <<EOF
+test_format committer %cn%n%ce%n%cl%n%cd%n%cD%n%ct <<EOF
 commit $head2
-C O Mitter
-committer@example.com
+$GIT_COMMITTER_NAME
+$GIT_COMMITTER_EMAIL
+$TEST_COMMITTER_LOCALNAME
 Thu Apr 7 15:13:13 2005 -0700
 Thu, 7 Apr 2005 15:13:13 -0700
 1112911993
 commit $head1
-C O Mitter
-committer@example.com
+$GIT_COMMITTER_NAME
+$GIT_COMMITTER_EMAIL
+$TEST_COMMITTER_LOCALNAME
 Thu Apr 7 15:13:13 2005 -0700
 Thu, 7 Apr 2005 15:13:13 -0700
 1112911993
@@ -410,7 +414,7 @@ test_expect_success 'empty email' '
 	test_tick &&
 	C=$(GIT_AUTHOR_EMAIL= git commit-tree HEAD^{tree} </dev/null) &&
 	A=$(git show --pretty=format:%an,%ae,%ad%n -s $C) &&
-	verbose test "$A" = "A U Thor,,Thu Apr 7 15:14:13 2005 -0700"
+	verbose test "$A" = "$GIT_AUTHOR_NAME,,Thu Apr 7 15:14:13 2005 -0700"
 '
 
 test_expect_success 'del LF before empty (1)' '
@@ -495,15 +499,14 @@ test_expect_success '%gd shortens ref name' '
 '
 
 test_expect_success 'reflog identity' '
-	echo "C O Mitter:committer@example.com" >expect &&
+	echo "$GIT_COMMITTER_NAME:$GIT_COMMITTER_EMAIL" >expect &&
 	git log -g -1 --format="%gn:%ge" >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'oneline with empty message' '
-	git commit -m "dummy" --allow-empty &&
-	git commit -m "dummy" --allow-empty &&
-	git filter-branch --msg-filter "sed -e s/dummy//" HEAD^^.. &&
+	git commit --allow-empty --cleanup=verbatim -m "$LF" &&
+	git commit --allow-empty --allow-empty-message &&
 	git rev-list --oneline HEAD >test.txt &&
 	test_line_count = 5 test.txt &&
 	git rev-list --oneline --graph HEAD >testg.txt &&

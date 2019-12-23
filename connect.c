@@ -511,7 +511,7 @@ int url_is_local_not_ssh(const char *url)
 	const char *colon = strchr(url, ':');
 	const char *slash = strchr(url, '/');
 	return !colon || (slash && slash < colon) ||
-		has_dos_drive_prefix(url);
+		(has_dos_drive_prefix(url) && is_valid_path(url));
 }
 
 static const char *prot_name(enum protocol protocol)
@@ -915,6 +915,10 @@ static enum protocol parse_connect_url(const char *url_orig, char **ret_host,
 
 	if (protocol == PROTO_LOCAL)
 		path = end;
+	else if (protocol == PROTO_FILE && *host != '/' &&
+		 !has_dos_drive_prefix(host) &&
+		 offset_1st_component(host - 2) > 1)
+		path = host - 2; /* include the leading "//" */
 	else if (protocol == PROTO_FILE && has_dos_drive_prefix(end))
 		path = end; /* "file://$(pwd)" may be "file://C:/projects/repo" */
 	else

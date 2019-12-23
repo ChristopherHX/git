@@ -593,6 +593,7 @@ int cmd_rev_parse(int argc, const char **argv, const char *prefix)
 	const char *name = NULL;
 	struct object_context unused;
 	struct strbuf buf = STRBUF_INIT;
+	const int hexsz = the_hash_algo->hexsz;
 
 	if (argc > 1 && !strcmp("--parseopt", argv[1]))
 		return cmd_parseopt(argc - 1, argv + 1, prefix);
@@ -730,8 +731,8 @@ int cmd_rev_parse(int argc, const char **argv, const char *prefix)
 				abbrev = strtoul(arg, NULL, 10);
 				if (abbrev < MINIMUM_ABBREV)
 					abbrev = MINIMUM_ABBREV;
-				else if (40 <= abbrev)
-					abbrev = 40;
+				else if (hexsz <= abbrev)
+					abbrev = hexsz;
 				continue;
 			}
 			if (!strcmp(arg, "--sq")) {
@@ -802,6 +803,8 @@ int cmd_rev_parse(int argc, const char **argv, const char *prefix)
 				const char *work_tree = get_git_work_tree();
 				if (work_tree)
 					puts(work_tree);
+				else
+					die("this operation must be run in a work tree");
 				continue;
 			}
 			if (!strcmp(arg, "--show-superproject-working-tree")) {
@@ -916,6 +919,17 @@ int cmd_rev_parse(int argc, const char **argv, const char *prefix)
 			}
 			if (skip_prefix(arg, "--until=", &arg)) {
 				show_datestring("--min-age=", arg);
+				continue;
+			}
+			if (opt_with_value(arg, "--show-object-format", &arg)) {
+				const char *val = arg ? arg : "storage";
+
+				if (strcmp(val, "storage") &&
+				    strcmp(val, "input") &&
+				    strcmp(val, "output"))
+					die("unknown mode for --show-object-format: %s",
+					    arg);
+				puts(the_hash_algo->name);
 				continue;
 			}
 			if (show_flag(arg) && verify)

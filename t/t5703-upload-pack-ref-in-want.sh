@@ -18,14 +18,16 @@ get_actual_commits () {
 		p
 		}' <out | test-tool pkt-line unpack-sideband >o.pack &&
 	git index-pack o.pack &&
-	git verify-pack -v o.idx | grep commit | cut -c-40 | sort >actual_commits
+	git verify-pack -v o.idx >objs &&
+	grep commit objs | cut -c-40 | sort >actual_commits
 }
 
 check_output () {
 	get_actual_refs &&
 	test_cmp expected_refs actual_refs &&
 	get_actual_commits &&
-	test_cmp expected_commits actual_commits
+	sort expected_commits >sorted_commits &&
+	test_cmp sorted_commits actual_commits
 }
 
 # c(o/foo) d(o/bar)
@@ -75,17 +77,19 @@ test_expect_success 'invalid want-ref line' '
 '
 
 test_expect_success 'basic want-ref' '
+	oid=$(git rev-parse f) &&
 	cat >expected_refs <<-EOF &&
-	$(git rev-parse f) refs/heads/master
+	$oid refs/heads/master
 	EOF
-	git rev-parse f | sort >expected_commits &&
+	git rev-parse f >expected_commits &&
 
+	oid=$(git rev-parse a) &&
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
 	0001
 	no-progress
 	want-ref refs/heads/master
-	have $(git rev-parse a)
+	have $oid
 	done
 	0000
 	EOF
@@ -95,19 +99,22 @@ test_expect_success 'basic want-ref' '
 '
 
 test_expect_success 'multiple want-ref lines' '
+	oid_c=$(git rev-parse c) &&
+	oid_d=$(git rev-parse d) &&
 	cat >expected_refs <<-EOF &&
-	$(git rev-parse c) refs/heads/o/foo
-	$(git rev-parse d) refs/heads/o/bar
+	$oid_c refs/heads/o/foo
+	$oid_d refs/heads/o/bar
 	EOF
-	git rev-parse c d | sort >expected_commits &&
+	git rev-parse c d >expected_commits &&
 
+	oid=$(git rev-parse b) &&
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
 	0001
 	no-progress
 	want-ref refs/heads/o/foo
 	want-ref refs/heads/o/bar
-	have $(git rev-parse b)
+	have $oid
 	done
 	0000
 	EOF
@@ -117,10 +124,11 @@ test_expect_success 'multiple want-ref lines' '
 '
 
 test_expect_success 'mix want and want-ref' '
+	oid=$(git rev-parse f) &&
 	cat >expected_refs <<-EOF &&
-	$(git rev-parse f) refs/heads/master
+	$oid refs/heads/master
 	EOF
-	git rev-parse e f | sort >expected_commits &&
+	git rev-parse e f >expected_commits &&
 
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
@@ -138,23 +146,142 @@ test_expect_success 'mix want and want-ref' '
 '
 
 test_expect_success 'want-ref with ref we already have commit for' '
+	oid=$(git rev-parse c) &&
 	cat >expected_refs <<-EOF &&
-	$(git rev-parse c) refs/heads/o/foo
+	$oid refs/heads/o/foo
 	EOF
 	>expected_commits &&
 
+	oid=$(git rev-parse c) &&
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
 	0001
 	no-progress
 	want-ref refs/heads/o/foo
-	have $(git rev-parse c)
+	have $oid
 	done
 	0000
 	EOF
 
 	test-tool serve-v2 --stateless-rpc >out <in &&
 	check_output
+'
+
+REPO="$(pwd)/repo"
+LOCAL_PRISTINE="$(pwd)/local_pristine"
+
+# $REPO
+# c(o/foo) d(o/bar)
+#        \ /
+#         b   e(baz)  f(master)
+#          \__  |  __/
+#             \ | /
+#               a
+#
+# $LOCAL_PRISTINE
+#		s32(side)
+#		|
+#		.
+#		.
+#		|
+#		a(master)
+test_expect_success 'setup repos for fetching with ref-in-want tests' '
+	(
+		git init "$REPO" &&
+		cd "$REPO" &&
+		test_commit a &&
+
+		# Local repo with many commits (so that negotiation will take
+		# more than 1 request/response pair)
+		rm -rf "$LOCAL_PRISTINE" &&
+		git clone "file://$REPO" "$LOCAL_PRISTINE" &&
+		cd "$LOCAL_PRISTINE" &&
+		git checkout -b side &&
+		test_commit_bulk --id=s 33 &&
+
+		# Add novel commits to upstream
+		git checkout master &&
+		cd "$REPO" &&
+		git checkout -b o/foo &&
+		test_commit b &&
+		test_commit c &&
+		git checkout -b o/bar b &&
+		test_commit d &&
+		git checkout -b baz a &&
+		test_commit e &&
+		git checkout master &&
+		test_commit f
+	) &&
+	git -C "$REPO" config uploadpack.allowRefInWant true &&
+	git -C "$LOCAL_PRISTINE" config protocol.version 2
+'
+
+test_expect_success 'fetching with exact OID' '
+	test_when_finished "rm -f log" &&
+
+	rm -rf local &&
+	cp -r "$LOCAL_PRISTINE" local &&
+	oid=$(git -C "$REPO" rev-parse d) &&
+	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin \
+		"$oid":refs/heads/actual &&
+
+	git -C "$REPO" rev-parse "d" >expected &&
+	git -C local rev-parse refs/heads/actual >actual &&
+	test_cmp expected actual &&
+	grep "want $oid" log
+'
+
+test_expect_success 'fetching multiple refs' '
+	test_when_finished "rm -f log" &&
+
+	rm -rf local &&
+	cp -r "$LOCAL_PRISTINE" local &&
+	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin master baz &&
+
+	git -C "$REPO" rev-parse "master" "baz" >expected &&
+	git -C local rev-parse refs/remotes/origin/master refs/remotes/origin/baz >actual &&
+	test_cmp expected actual &&
+	grep "want-ref refs/heads/master" log &&
+	grep "want-ref refs/heads/baz" log
+'
+
+test_expect_success 'fetching ref and exact OID' '
+	test_when_finished "rm -f log" &&
+
+	rm -rf local &&
+	cp -r "$LOCAL_PRISTINE" local &&
+	oid=$(git -C "$REPO" rev-parse b) &&
+	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin \
+		master "$oid":refs/heads/actual &&
+
+	git -C "$REPO" rev-parse "master" "b" >expected &&
+	git -C local rev-parse refs/remotes/origin/master refs/heads/actual >actual &&
+	test_cmp expected actual &&
+	grep "want $oid" log &&
+	grep "want-ref refs/heads/master" log
+'
+
+test_expect_success 'fetching with wildcard that does not match any refs' '
+	test_when_finished "rm -f log" &&
+
+	rm -rf local &&
+	cp -r "$LOCAL_PRISTINE" local &&
+	git -C local fetch origin refs/heads/none*:refs/heads/* >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'fetching with wildcard that matches multiple refs' '
+	test_when_finished "rm -f log" &&
+
+	rm -rf local &&
+	cp -r "$LOCAL_PRISTINE" local &&
+	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin refs/heads/o*:refs/heads/o* &&
+
+	git -C "$REPO" rev-parse "o/foo" "o/bar" >expected &&
+	git -C local rev-parse "o/foo" "o/bar" >actual &&
+	test_cmp expected actual &&
+	grep "want-ref refs/heads/o/foo" log &&
+	grep "want-ref refs/heads/o/bar" log
 '
 
 . "$TEST_DIRECTORY"/lib-httpd.sh
@@ -173,6 +300,7 @@ test_expect_success 'setup repos for change-while-negotiating test' '
 
 		# Local repo with many commits (so that negotiation will take
 		# more than 1 request/response pair)
+		rm -rf "$LOCAL_PRISTINE" &&
 		git clone "http://127.0.0.1:$LIB_HTTPD_PORT/smart/repo" "$LOCAL_PRISTINE" &&
 		cd "$LOCAL_PRISTINE" &&
 		git checkout -b side &&
@@ -196,10 +324,9 @@ inconsistency () {
 	# repository appears to change during negotiation, for example, when
 	# different servers in a load-balancing arrangement serve (stateless)
 	# RPCs during a single negotiation.
-	printf "s/%s/%s/" \
-	       $(git -C "$REPO" rev-parse $1 | tr -d "\n") \
-	       $(git -C "$REPO" rev-parse $2 | tr -d "\n") \
-	       >"$HTTPD_ROOT_PATH/one-time-sed"
+	oid1=$(git -C "$REPO" rev-parse $1) &&
+	oid2=$(git -C "$REPO" rev-parse $2) &&
+	echo "s/$oid1/$oid2/" >"$HTTPD_ROOT_PATH/one-time-sed"
 }
 
 test_expect_success 'server is initially ahead - no ref in want' '
@@ -257,119 +384,7 @@ test_expect_success 'server loses a ref - ref in want' '
 	test_i18ngrep "fatal: remote error: unknown ref refs/heads/raster" err
 '
 
-REPO="$(pwd)/repo"
-LOCAL_PRISTINE="$(pwd)/local_pristine"
-
-# $REPO
-# c(o/foo) d(o/bar)
-#        \ /
-#         b   e(baz)  f(master)
-#          \__  |  __/
-#             \ | /
-#               a
-#
-# $LOCAL_PRISTINE
-#		s32(side)
-#		|
-#		.
-#		.
-#		|
-#		a(master)
-test_expect_success 'setup repos for fetching with ref-in-want tests' '
-	(
-		git init "$REPO" &&
-		cd "$REPO" &&
-		test_commit a &&
-
-		# Local repo with many commits (so that negotiation will take
-		# more than 1 request/response pair)
-		rm -rf "$LOCAL_PRISTINE" &&
-		git clone "file://$REPO" "$LOCAL_PRISTINE" &&
-		cd "$LOCAL_PRISTINE" &&
-		git checkout -b side &&
-		test_commit_bulk --id=s 33 &&
-
-		# Add novel commits to upstream
-		git checkout master &&
-		cd "$REPO" &&
-		git checkout -b o/foo &&
-		test_commit b &&
-		test_commit c &&
-		git checkout -b o/bar b &&
-		test_commit d &&
-		git checkout -b baz a &&
-		test_commit e &&
-		git checkout master &&
-		test_commit f
-	) &&
-	git -C "$REPO" config uploadpack.allowRefInWant true &&
-	git -C "$LOCAL_PRISTINE" config protocol.version 2
-'
-
-test_expect_success 'fetching with exact OID' '
-	test_when_finished "rm -f log" &&
-
-	rm -rf local &&
-	cp -r "$LOCAL_PRISTINE" local &&
-	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin \
-		$(git -C "$REPO" rev-parse d):refs/heads/actual &&
-
-	git -C "$REPO" rev-parse "d" >expected &&
-	git -C local rev-parse refs/heads/actual >actual &&
-	test_cmp expected actual &&
-	grep "want $(git -C "$REPO" rev-parse d)" log
-'
-
-test_expect_success 'fetching multiple refs' '
-	test_when_finished "rm -f log" &&
-
-	rm -rf local &&
-	cp -r "$LOCAL_PRISTINE" local &&
-	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin master baz &&
-
-	git -C "$REPO" rev-parse "master" "baz" >expected &&
-	git -C local rev-parse refs/remotes/origin/master refs/remotes/origin/baz >actual &&
-	test_cmp expected actual &&
-	grep "want-ref refs/heads/master" log &&
-	grep "want-ref refs/heads/baz" log
-'
-
-test_expect_success 'fetching ref and exact OID' '
-	test_when_finished "rm -f log" &&
-
-	rm -rf local &&
-	cp -r "$LOCAL_PRISTINE" local &&
-	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin \
-		master $(git -C "$REPO" rev-parse b):refs/heads/actual &&
-
-	git -C "$REPO" rev-parse "master" "b" >expected &&
-	git -C local rev-parse refs/remotes/origin/master refs/heads/actual >actual &&
-	test_cmp expected actual &&
-	grep "want $(git -C "$REPO" rev-parse b)" log &&
-	grep "want-ref refs/heads/master" log
-'
-
-test_expect_success 'fetching with wildcard that does not match any refs' '
-	test_when_finished "rm -f log" &&
-
-	rm -rf local &&
-	cp -r "$LOCAL_PRISTINE" local &&
-	git -C local fetch origin refs/heads/none*:refs/heads/* >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'fetching with wildcard that matches multiple refs' '
-	test_when_finished "rm -f log" &&
-
-	rm -rf local &&
-	cp -r "$LOCAL_PRISTINE" local &&
-	GIT_TRACE_PACKET="$(pwd)/log" git -C local fetch origin refs/heads/o*:refs/heads/o* &&
-
-	git -C "$REPO" rev-parse "o/foo" "o/bar" >expected &&
-	git -C local rev-parse "o/foo" "o/bar" >actual &&
-	test_cmp expected actual &&
-	grep "want-ref refs/heads/o/foo" log &&
-	grep "want-ref refs/heads/o/bar" log
-'
+# DO NOT add non-httpd-specific tests here, because the last part of this
+# test script is only executed when httpd is available and enabled.
 
 test_done

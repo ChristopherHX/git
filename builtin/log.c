@@ -37,6 +37,7 @@
 #include "range-diff.h"
 
 #define MAIL_DEFAULT_WRAP 72
+#define COVER_FROM_AUTO_MAX_SUBJECT_LEN 100
 
 /* Set a default date-time format for git log ("log.date" config variable) */
 static const char *default_date_mode = NULL;
@@ -627,6 +628,7 @@ int cmd_show(int argc, const char **argv, const char *prefix)
 			break;
 		case OBJ_TAG: {
 			struct tag *t = (struct tag *)o;
+			struct object_id *oid = get_tagged_oid(t);
 
 			if (rev.shown_one)
 				putchar('\n');
@@ -638,10 +640,10 @@ int cmd_show(int argc, const char **argv, const char *prefix)
 			rev.shown_one = 1;
 			if (ret)
 				break;
-			o = parse_object(the_repository, &t->tagged->oid);
+			o = parse_object(the_repository, oid);
 			if (!o)
 				ret = error(_("could not read object %s"),
-					    oid_to_hex(&t->tagged->oid));
+					    oid_to_hex(oid));
 			objects[i].item = o;
 			i--;
 			break;
@@ -764,23 +766,51 @@ static void add_header(const char *value)
 	item->string[len] = '\0';
 }
 
-#define THREAD_SHALLOW 1
-#define THREAD_DEEP 2
-static int thread;
-static int do_signoff;
-static int base_auto;
-static char *from;
-static const char *signature = git_version_string;
-static const char *signature_file;
-static int config_cover_letter;
-static const char *config_output_directory;
-
-enum {
+enum cover_setting {
 	COVER_UNSET,
 	COVER_OFF,
 	COVER_ON,
 	COVER_AUTO
 };
+
+enum thread_level {
+	THREAD_UNSET,
+	THREAD_SHALLOW,
+	THREAD_DEEP
+};
+
+enum cover_from_description {
+	COVER_FROM_NONE,
+	COVER_FROM_MESSAGE,
+	COVER_FROM_SUBJECT,
+	COVER_FROM_AUTO
+};
+
+static enum thread_level thread;
+static int do_signoff;
+static int base_auto;
+static char *from;
+static const char *signature = git_version_string;
+static const char *signature_file;
+static enum cover_setting config_cover_letter;
+static const char *config_output_directory;
+static enum cover_from_description cover_from_description_mode = COVER_FROM_MESSAGE;
+
+static enum cover_from_description parse_cover_from_description(const char *arg)
+{
+	if (!arg || !strcmp(arg, "default"))
+		return COVER_FROM_MESSAGE;
+	else if (!strcmp(arg, "none"))
+		return COVER_FROM_NONE;
+	else if (!strcmp(arg, "message"))
+		return COVER_FROM_MESSAGE;
+	else if (!strcmp(arg, "subject"))
+		return COVER_FROM_SUBJECT;
+	else if (!strcmp(arg, "auto"))
+		return COVER_FROM_AUTO;
+	else
+		die(_("%s: invalid cover from description mode"), arg);
+}
 
 static int git_format_config(const char *var, const char *value, void *cb)
 {
@@ -835,7 +865,7 @@ static int git_format_config(const char *var, const char *value, void *cb)
 			thread = THREAD_SHALLOW;
 			return 0;
 		}
-		thread = git_config_bool(var, value) && THREAD_SHALLOW;
+		thread = git_config_bool(var, value) ? THREAD_SHALLOW : THREAD_UNSET;
 		return 0;
 	}
 	if (!strcmp(var, "format.signoff")) {
@@ -885,6 +915,10 @@ static int git_format_config(const char *var, const char *value, void *cb)
 		} else {
 			rev->notes_opt.use_default_notes = 1;
 		}
+		return 0;
+	}
+	if (!strcmp(var, "format.coverfromdescription")) {
+		cover_from_description_mode = parse_cover_from_description(value);
 		return 0;
 	}
 
@@ -993,20 +1027,6 @@ static void print_signature(FILE *file)
 	putc('\n', file);
 }
 
-static void add_branch_description(struct strbuf *buf, const char *branch_name)
-{
-	struct strbuf desc = STRBUF_INIT;
-	if (!branch_name || !*branch_name)
-		return;
-	read_branch_desc(&desc, branch_name);
-	if (desc.len) {
-		strbuf_addch(buf, '\n');
-		strbuf_addbuf(buf, &desc);
-		strbuf_addch(buf, '\n');
-	}
-	strbuf_release(&desc);
-}
-
 static char *find_branch_name(struct rev_info *rev)
 {
 	int i, positive = -1;
@@ -1053,6 +1073,63 @@ static void show_diffstat(struct rev_info *rev,
 	fprintf(rev->diffopt.file, "\n");
 }
 
+static void prepare_cover_text(struct pretty_print_context *pp,
+			       const char *branch_name,
+			       struct strbuf *sb,
+			       const char *encoding,
+			       int need_8bit_cte)
+{
+	const char *subject = "*** SUBJECT HERE ***";
+	const char *body = "*** BLURB HERE ***";
+	struct strbuf description_sb = STRBUF_INIT;
+	struct strbuf subject_sb = STRBUF_INIT;
+
+	if (cover_from_description_mode == COVER_FROM_NONE)
+		goto do_pp;
+
+	if (branch_name && *branch_name)
+		read_branch_desc(&description_sb, branch_name);
+	if (!description_sb.len)
+		goto do_pp;
+
+	if (cover_from_description_mode == COVER_FROM_SUBJECT ||
+			cover_from_description_mode == COVER_FROM_AUTO)
+		body = format_subject(&subject_sb, description_sb.buf, " ");
+
+	if (cover_from_description_mode == COVER_FROM_MESSAGE ||
+			(cover_from_description_mode == COVER_FROM_AUTO &&
+			 subject_sb.len > COVER_FROM_AUTO_MAX_SUBJECT_LEN))
+		body = description_sb.buf;
+	else
+		subject = subject_sb.buf;
+
+do_pp:
+	pp_title_line(pp, &subject, sb, encoding, need_8bit_cte);
+	pp_remainder(pp, &body, sb, 0);
+
+	strbuf_release(&description_sb);
+	strbuf_release(&subject_sb);
+}
+
+static int get_notes_refs(struct string_list_item *item, void *arg)
+{
+	argv_array_pushf(arg, "--notes=%s", item->string);
+	return 0;
+}
+
+static void get_notes_args(struct argv_array *arg, struct rev_info *rev)
+{
+	if (!rev->show_notes) {
+		argv_array_push(arg, "--no-notes");
+	} else if (rev->notes_opt.use_default_notes > 0 ||
+		   (rev->notes_opt.use_default_notes == -1 &&
+		    !rev->notes_opt.extra_notes_refs.nr)) {
+		argv_array_push(arg, "--notes");
+	} else {
+		for_each_string_list(&rev->notes_opt.extra_notes_refs, get_notes_refs, arg);
+	}
+}
+
 static void make_cover_letter(struct rev_info *rev, int use_stdout,
 			      struct commit *origin,
 			      int nr, struct commit **list,
@@ -1060,8 +1137,6 @@ static void make_cover_letter(struct rev_info *rev, int use_stdout,
 			      int quiet)
 {
 	const char *committer;
-	const char *body = "*** SUBJECT HERE ***\n\n*** BLURB HERE ***\n";
-	const char *msg;
 	struct shortlog log;
 	struct strbuf sb = STRBUF_INIT;
 	int i;
@@ -1091,15 +1166,12 @@ static void make_cover_letter(struct rev_info *rev, int use_stdout,
 	if (!branch_name)
 		branch_name = find_branch_name(rev);
 
-	msg = body;
 	pp.fmt = CMIT_FMT_EMAIL;
 	pp.date_mode.type = DATE_RFC2822;
 	pp.rev = rev;
 	pp.print_email_subject = 1;
 	pp_user_info(&pp, NULL, &sb, committer, encoding);
-	pp_title_line(&pp, &msg, &sb, encoding, need_8bit_cte);
-	pp_remainder(&pp, &msg, &sb, 0);
-	add_branch_description(&sb, branch_name);
+	prepare_cover_text(&pp, branch_name, &sb, encoding, need_8bit_cte);
 	fprintf(rev->diffopt.file, "%s\n", sb.buf);
 
 	strbuf_release(&sb);
@@ -1130,13 +1202,16 @@ static void make_cover_letter(struct rev_info *rev, int use_stdout,
 		 * can be added later if deemed desirable.
 		 */
 		struct diff_options opts;
+		struct argv_array other_arg = ARGV_ARRAY_INIT;
 		diff_setup(&opts);
 		opts.file = rev->diffopt.file;
 		opts.use_color = rev->diffopt.use_color;
 		diff_setup_done(&opts);
 		fprintf_ln(rev->diffopt.file, "%s", rev->rdiff_title);
+		get_notes_args(&other_arg, rev);
 		show_range_diff(rev->rdiff1, rev->rdiff2,
-				rev->creation_factor, 1, &opts);
+				rev->creation_factor, 1, &opts, &other_arg);
+		argv_array_clear(&other_arg);
 	}
 }
 
@@ -1248,9 +1323,9 @@ static int output_directory_callback(const struct option *opt, const char *arg,
 
 static int thread_callback(const struct option *opt, const char *arg, int unset)
 {
-	int *thread = (int *)opt->value;
+	enum thread_level *thread = (enum thread_level *)opt->value;
 	if (unset)
-		*thread = 0;
+		*thread = THREAD_UNSET;
 	else if (!arg || !strcmp(arg, "shallow"))
 		*thread = THREAD_SHALLOW;
 	else if (!strcmp(arg, "deep"))
@@ -1297,7 +1372,7 @@ static int header_callback(const struct option *opt, const char *arg, int unset)
 		string_list_clear(&extra_to, 0);
 		string_list_clear(&extra_cc, 0);
 	} else {
-	    add_header(arg);
+		add_header(arg);
 	}
 	return 0;
 }
@@ -1353,7 +1428,7 @@ static struct commit *get_base_commit(const char *base_commit,
 		base = lookup_commit_reference_by_name(base_commit);
 		if (!base)
 			die(_("unknown commit %s"), base_commit);
-	} else if ((base_commit && !strcmp(base_commit, "auto")) || base_auto) {
+	} else if ((base_commit && !strcmp(base_commit, "auto"))) {
 		struct branch *curr_branch = branch_get(NULL);
 		const char *upstream = branch_get_upstream(curr_branch, NULL);
 		if (upstream) {
@@ -1541,6 +1616,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 	int use_patch_format = 0;
 	int quiet = 0;
 	int reroll_count = -1;
+	char *cover_from_description_arg = NULL;
 	char *branch_name = NULL;
 	char *base_commit = NULL;
 	struct base_tree_info bases;
@@ -1577,6 +1653,9 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 		{ OPTION_CALLBACK, 0, "rfc", &rev, NULL,
 			    N_("Use [RFC PATCH] instead of [PATCH]"),
 			    PARSE_OPT_NOARG | PARSE_OPT_NONEG, rfc_callback },
+		OPT_STRING(0, "cover-from-description", &cover_from_description_arg,
+			    N_("cover-from-description-mode"),
+			    N_("generate parts of a cover letter based on a branch's description")),
 		{ OPTION_CALLBACK, 0, "subject-prefix", &rev, N_("prefix"),
 			    N_("Use [<prefix>] instead of [PATCH]"),
 			    PARSE_OPT_NONEG, subject_prefix_callback },
@@ -1653,6 +1732,9 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 	s_r_opt.def = "HEAD";
 	s_r_opt.revarg_opt = REVARG_COMMITTISH;
 
+	if (base_auto)
+		base_commit = "auto";
+
 	if (default_attach) {
 		rev.mime_boundary = default_attach;
 		rev.no_inline = 1;
@@ -1667,6 +1749,9 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 			     builtin_format_patch_usage,
 			     PARSE_OPT_KEEP_ARGV0 | PARSE_OPT_KEEP_UNKNOWN |
 			     PARSE_OPT_KEEP_DASHDASH);
+
+	if (cover_from_description_arg)
+		cover_from_description_mode = parse_cover_from_description(cover_from_description_arg);
 
 	if (0 < reroll_count) {
 		struct strbuf sprefix = STRBUF_INIT;
@@ -1765,10 +1850,26 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 		setup_pager();
 
 	if (output_directory) {
+		int saved;
 		if (rev.diffopt.use_color != GIT_COLOR_ALWAYS)
 			rev.diffopt.use_color = GIT_COLOR_NEVER;
 		if (use_stdout)
 			die(_("standard output, or directory, which one?"));
+		/*
+		 * We consider <outdir> as 'outside of gitdir', therefore avoid
+		 * applying adjust_shared_perm in s-c-l-d.
+		 */
+		saved = get_shared_repository();
+		set_shared_repository(0);
+		switch (safe_create_leading_directories_const(output_directory)) {
+		case SCLD_OK:
+		case SCLD_EXISTS:
+			break;
+		default:
+			die(_("could not create leading directories "
+			      "of '%s'"), output_directory);
+		}
+		set_shared_repository(saved);
 		if (mkdir(output_directory, 0777) < 0 && errno != EEXIST)
 			die_errno(_("could not create directory '%s'"),
 				  output_directory);
@@ -1897,7 +1998,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
 	}
 
 	memset(&bases, 0, sizeof(bases));
-	if (base_commit || base_auto) {
+	if (base_commit) {
 		struct commit *base = get_base_commit(base_commit, list, nr);
 		reset_revision_walk();
 		clear_object_flags(UNINTERESTING);

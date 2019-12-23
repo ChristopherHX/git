@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="windows-1252" ?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product Name="git" Manufacturer="Git for Windows" Id="28570b84-4889-44fe-9e9e-39393825100a" UpgradeCode="e919d790-bd17-472c-a8fc-20a10f1d728f" Language="1033" Codepage="1252" Version="1.0.0">
+        <Package Id="*" Keywords="Installer" Description="Git for Windows Installer" Comments="Git Version Control for windows" Manufacturer="Git for Windows" InstallerVersion="500" Languages="1033" Compressed="yes" SummaryCodepage="1252" />
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder" Name="PFiles">
+                <Directory Id="INSTALLDIR" Name="git">
+                    <Directory Id="BinFolder" Name="bin" />
+                    <Directory Id="SHAREFolder" Name="share">
+                        <Directory Id="LOCALEFolder" Name="po" />
+                    </Directory>
+                </Directory>
+            </Directory>
+        </Directory>
+        <Media Id="1" Cabinet="bin.cab" EmbedCab="yes" />
+        <Component Id="MainExecutable" Directory="BinFolder" Guid="abb74968-dd9b-4c76-8156-7d0eff76839b">
+            <File Id="GITEXE" Name="git.exe" Source="git.exe" />
+            <File Id="GITDLL" Name="git-core.dll" Source="git-core.dll" />
+        </Component>
+        <Component Id="LIBCURL" Directory="BinFolder" Guid="38182b24-5a54-4d6c-8d58-6fe708809bab">
+            <File Id="LIBCURLDLL" Name="libcurl.dll" Source="libcurl.dll" />
+        </Component>
+        <Component Id="ZLIB" Directory="BinFolder" Guid="57bed7c4-32d3-478c-9684-4ec9605dd99c">
+            <File Id="ZLIBDLL" Name="zlibwapi.dll" Source="zlibwapi.dll" />
+        </Component>
+        <Component Id="LIBINTL" Directory="BinFolder" Guid="bc56cf29-2532-4b41-9773-3be52712e01a">
+            <File Id="LIBINTLDLL" Name="libintl.dll" Source="libintl.dll" />
+        </Component>
+        <Component Id="LIBICONV" Directory="BinFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+            <File Id="LIBICONVDLL" Name="libiconv.dll" Source="libiconv.dll" />
+        </Component>
+        <Component Id="DE" Directory="BinFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+            <File Id="LIBICONVDLL" Name="libiconv.dll" Source="libiconv.dll" />
+        </Component>
+        <Feature Id="Complete" Title="Git for Windows" Level="1">
+            <ComponentRef Id="MainExecutable" />
+            <Feature Id="libcurl" Title="libcurl for Windows" Level="1">
+                <ComponentRef Id="LIBCURL" />
+            </Feature>
+            <Feature Id="zlib" Title="zlib for Windows" Level="1">
+                <ComponentRef Id="ZLIB" />
+            </Feature>
+            <Feature Id="libintl" Title="libintl (gnu gettext) for Windows" Level="1">
+                <ComponentRef Id="LIBINTL" />
+                <Feature Id="libiconv" Title="libiconv for Windows" Level="1">
+                    <ComponentRef Id="LIBICONV" />
+                </Feature>
+            </Feature>
+            <Feature Id="TEMPLATES" Title="Git Templates" Level="1">
+                <ComponentGroupRef Id="TEMPLATES" />
+            </Feature>
+            <Feature Id="HTMLDOC" Title="Html Documentation" Level="2">
+                <ComponentGroupRef Id="HTMLDOC" />
+            </Feature>
+            <Feature Id="LOCALE" Title="Localisation" Level="3">
+                <Feature Id="bg" Title="bg" Level="3">
+                    <Component Id="bg" Directory="LOCALEFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+                        <Directory Name="bg">
+                            <Directory Name="LC_MESSAGES">
+                                <File Name="git.mo" Source="locale\bg\LC_MESSAGES\git.mo" />
+                            </Directory>
+                        </Directory>
+                    </Component>
+                </Feature>
+                <Feature Id="ca" Title="ca" Level="3">
+                    <Component Id="ca" Directory="LOCALEFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+                        <Directory Name="ca">
+                            <Directory Name="LC_MESSAGES">
+                                <File Name="git.mo" Source="locale\ca\LC_MESSAGES\git.mo" />
+                            </Directory>
+                        </Directory>
+                    </Component>
+                </Feature>
+                <Feature Id="de" Title="Deutsch" Level="3">
+                    <Component Id="de" Directory="LOCALEFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+                        <Directory Name="de">
+                            <Directory Name="LC_MESSAGES">
+                                <File Name="git.mo" Source="locale\de\LC_MESSAGES\git.mo" />
+                            </Directory>
+                        </Directory>
+                    </Component>
+                </Feature>
+                <Feature Id="el" Title="el" Level="3">
+                    <Component Id="bg" Directory="LOCALEFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+                        <Directory Name="el">
+                            <Directory Name="LC_MESSAGES">
+                                <File Name="git.mo" Source="locale\el\LC_MESSAGES\git.mo" />
+                            </Directory>
+                        </Directory>
+                    </Component>
+                </Feature>
+                <Feature Id="es" Title="es" Level="3">
+                    <Component Id="es" Directory="LOCALEFolder" Guid="ff333478-e022-4aa5-ba9d-5c5636c51ac1">
+                        <Directory Name="es">
+                            <Directory Name="LC_MESSAGES">
+                                <File Name="git.mo" Source="locale\es\LC_MESSAGES\git.mo" />
+                            </Directory>
+                        </Directory>
+                    </Component>
+                </Feature>
+            </Feature>
+        </Feature>
+        <WixVariable Id="WixUILicenseRtf" Value="gpl-2.0.rtf" />
+        <UIRef Id="WixUI_Mondo" />
+        <UIRef Id="WixUI_ErrorProgressText" />
+        <!-- <Property Id='CMD'>cmd.exe</Property> -->
+        <!-- <CustomAction Id='LaunchFile' Property='CMD' ExeCommand='/c mklink "[BinFolder]git-push.exe" "[BinFolder]git.exe"' Execute='deferred' Impersonate='no' Return='check' />  -->
+        <!-- <InstallExecuteSequence>
+            <Custom Action='LaunchFile' After='InstallFiles'></Custom>
+        </InstallExecuteSequence> -->
+    </Product>
+</Wix>

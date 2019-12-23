@@ -34,6 +34,11 @@ save_good_tree () {
 # successfully before (e.g. because the branch got rebased, changing only
 # the commit messages).
 skip_good_tree () {
+	if test "$TRAVIS_DEBUG_MODE" = true
+	then
+		return
+	fi
+
 	if ! good_tree_info="$(grep "^$(git rev-parse $CI_COMMIT^{tree}) " "$good_trees_file")"
 	then
 		# Haven't seen this tree yet, or no cached good trees file yet.
@@ -126,7 +131,6 @@ then
 		echo "$SYSTEM_TASKDEFINITIONSURI$SYSTEM_TEAMPROJECT/_build/results?buildId=$1"
 	}
 
-	BREW_INSTALL_PACKAGES=gcc@8
 	export GIT_PROVE_OPTS="--timer --jobs 10 --state=failed,slow,save"
 	export GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
 	MAKEFLAGS="$MAKEFLAGS --jobs=10"
@@ -151,7 +155,7 @@ fi
 
 export DEVELOPER=1
 export DEFAULT_TEST_TARGET=prove
-export GIT_TEST_CLONE_2GB=YesPlease
+export GIT_TEST_CLONE_2GB=true
 
 case "$jobname" in
 linux-clang|linux-gcc)
@@ -160,7 +164,7 @@ linux-clang|linux-gcc)
 		export CC=gcc-8
 	fi
 
-	export GIT_TEST_HTTPD=YesPlease
+	export GIT_TEST_HTTPD=true
 
 	# The Linux build installs the defined dependency versions below.
 	# The OS X build installs much more recent versions, whichever
@@ -177,7 +181,7 @@ linux-clang|linux-gcc)
 osx-clang|osx-gcc)
 	if [ "$jobname" = osx-gcc ]
 	then
-		export CC=gcc-8
+		export CC=gcc-9
 	fi
 
 	# t9810 occasionally fails on Travis CI OS X

@@ -77,6 +77,7 @@ void add_name_decoration(enum decoration_type type, const char *name, struct obj
 
 const struct name_decoration *get_name_decoration(const struct object *obj)
 {
+	load_ref_decorations(NULL, DECORATE_SHORT_REFS);
 	return lookup_decoration(&name_decoration, obj);
 }
 
@@ -448,22 +449,22 @@ static void show_signature(struct rev_info *opt, struct commit *commit)
 {
 	struct strbuf payload = STRBUF_INIT;
 	struct strbuf signature = STRBUF_INIT;
-	struct strbuf gpg_output = STRBUF_INIT;
+	struct signature_check sigc = { 0 };
 	int status;
 
 	if (parse_signed_commit(commit, &payload, &signature) <= 0)
 		goto out;
 
-	status = verify_signed_buffer(payload.buf, payload.len,
-				      signature.buf, signature.len,
-				      &gpg_output, NULL);
-	if (status && !gpg_output.len)
-		strbuf_addstr(&gpg_output, "No signature\n");
-
-	show_sig_lines(opt, status, gpg_output.buf);
+	status = check_signature(payload.buf, payload.len, signature.buf,
+				 signature.len, &sigc);
+	if (status && sigc.result == 'N')
+		show_sig_lines(opt, status, "No signature\n");
+	else {
+		show_sig_lines(opt, status, sigc.gpg_output);
+		signature_check_clear(&sigc);
+	}
 
  out:
-	strbuf_release(&gpg_output);
 	strbuf_release(&payload);
 	strbuf_release(&signature);
 }
@@ -496,6 +497,7 @@ static int show_one_mergetag(struct commit *commit,
 	struct object_id oid;
 	struct tag *tag;
 	struct strbuf verify_message;
+	struct signature_check sigc = { 0 };
 	int status, nth;
 	size_t payload_size, gpg_message_offset;
 
@@ -524,12 +526,13 @@ static int show_one_mergetag(struct commit *commit,
 	status = -1;
 	if (extra->len > payload_size) {
 		/* could have a good signature */
-		if (!verify_signed_buffer(extra->value, payload_size,
-					  extra->value + payload_size,
-					  extra->len - payload_size,
-					  &verify_message, NULL))
+		if (!check_signature(extra->value, payload_size,
+				     extra->value + payload_size,
+				     extra->len - payload_size, &sigc)) {
+			strbuf_addstr(&verify_message, sigc.gpg_output);
+			signature_check_clear(&sigc);
 			status = 0; /* good */
-		else if (verify_message.len <= gpg_message_offset)
+		} else if (verify_message.len <= gpg_message_offset)
 			strbuf_addstr(&verify_message, "No signature\n");
 		/* otherwise we couldn't verify, which is shown as bad */
 	}
@@ -677,9 +680,7 @@ void show_log(struct rev_info *opt)
 		raw = (opt->commit_format == CMIT_FMT_USERFORMAT);
 		format_display_notes(&commit->object.oid, &notebuf,
 				     get_log_output_encoding(), raw);
-		ctx.notes_message = notebuf.len
-			? strbuf_detach(&notebuf, NULL)
-			: xcalloc(1, 1);
+		ctx.notes_message = strbuf_detach(&notebuf, NULL);
 	}
 
 	/*
@@ -771,7 +772,7 @@ void show_log(struct rev_info *opt)
 		opts.use_color = opt->diffopt.use_color;
 		diff_setup_done(&opts);
 		show_range_diff(opt->rdiff1, opt->rdiff2,
-				opt->creation_factor, 1, &opts);
+				opt->creation_factor, 1, &opts, NULL);
 
 		memcpy(&diff_queued_diff, &dq, sizeof(diff_queued_diff));
 	}

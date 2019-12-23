@@ -667,7 +667,7 @@ cat > expect <<\EOF
 * | | fifth
 * | | fourth
 |/ /
-* | third
+* / third
 |/
 * second
 * initial
@@ -834,6 +834,21 @@ test_expect_success 'decorate-refs and decorate-refs-exclude' '
 	git log -n6 --decorate=short --pretty="tformat:%f%d" \
 		--decorate-refs="heads/*" \
 		--decorate-refs-exclude="heads/oc*" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs-exclude and simplify-by-decoration' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (HEAD -> master)
+	reach (tag: reach, reach)
+	seventh (tag: seventh)
+	Merge-branch-tangle
+	Merge-branch-side-early-part-into-tangle (tangle)
+	tangle-a (tag: tangle-a)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="*octopus*" \
+		--simplify-by-decoration >actual &&
 	test_cmp expect.decorate actual
 '
 
@@ -1555,6 +1570,14 @@ test_expect_success GPG 'setup signed branch' '
 	git commit -S -m signed_commit
 '
 
+test_expect_success GPG 'setup signed branch with subkey' '
+	test_when_finished "git reset --hard && git checkout master" &&
+	git checkout -b signed-subkey master &&
+	echo foo >foo &&
+	git add foo &&
+	git commit -SB7227189 -m signed_commit
+'
+
 test_expect_success GPGSM 'setup signed branch x509' '
 	test_when_finished "git reset --hard && git checkout master" &&
 	git checkout -b signed-x509 master &&
@@ -1563,6 +1586,18 @@ test_expect_success GPGSM 'setup signed branch x509' '
 	test_config gpg.format x509 &&
 	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
 	git commit -S -m signed_commit
+'
+
+test_expect_success GPGSM 'log x509 fingerprint' '
+	echo "F8BF62E0693D0694816377099909C779FA23FD65 | " >expect &&
+	git log -n1 --format="%GF | %GP" signed-x509 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPGSM 'log OpenPGP fingerprint' '
+	echo "D4BE22311AD3131E5EDA29A461092E85B7227189" > expect &&
+	git log -n1 --format="%GP" signed-subkey >actual &&
+	test_cmp expect actual
 '
 
 test_expect_success GPG 'log --graph --show-signature' '
@@ -1705,6 +1740,13 @@ test_expect_success 'log --source paints symmetric ranges' '
 
 test_expect_success '--exclude-promisor-objects does not BUG-crash' '
 	test_must_fail git log --exclude-promisor-objects source-a
+'
+
+test_expect_success 'log --end-of-options' '
+       git update-ref refs/heads/--source HEAD &&
+       git log --end-of-options --source >actual &&
+       git log >expect &&
+       test_cmp expect actual
 '
 
 test_done

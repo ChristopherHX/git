@@ -34,7 +34,7 @@ static struct category_description main_categories[] = {
 	{ CAT_foreignscminterface, N_("Interacting with Others") },
 	{ CAT_plumbingmanipulators, N_("Low-level Commands / Manipulators") },
 	{ CAT_plumbinginterrogators, N_("Low-level Commands / Interrogators") },
-	{ CAT_synchingrepositories, N_("Low-level Commands / Synching Repositories") },
+	{ CAT_synchingrepositories, N_("Low-level Commands / Syncing Repositories") },
 	{ CAT_purehelpers, N_("Low-level Commands / Internal Helpers") },
 	{ 0, NULL }
 };
@@ -774,7 +774,8 @@ static struct string_list guess_refs(const char *ref)
 	return similar_refs;
 }
 
-void help_unknown_ref(const char *ref, const char *cmd, const char *error)
+NORETURN void help_unknown_ref(const char *ref, const char *cmd,
+			       const char *error)
 {
 	int i;
 	struct string_list suggested_refs = guess_refs(ref);

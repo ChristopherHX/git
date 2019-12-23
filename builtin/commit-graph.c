@@ -8,25 +8,18 @@
 #include "object-store.h"
 
 static char const * const builtin_commit_graph_usage[] = {
-	N_("git commit-graph [--object-dir <objdir>]"),
-	N_("git commit-graph read [--object-dir <objdir>]"),
-	N_("git commit-graph verify [--object-dir <objdir>] [--shallow]"),
-	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] <split options>"),
+	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]"),
+	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] [--[no-]progress] <split options>"),
 	NULL
 };
 
 static const char * const builtin_commit_graph_verify_usage[] = {
-	N_("git commit-graph verify [--object-dir <objdir>] [--shallow]"),
-	NULL
-};
-
-static const char * const builtin_commit_graph_read_usage[] = {
-	N_("git commit-graph read [--object-dir <objdir>]"),
+	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]"),
 	NULL
 };
 
 static const char * const builtin_commit_graph_write_usage[] = {
-	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] <split options>"),
+	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] [--[no-]progress] <split options>"),
 	NULL
 };
 
@@ -38,6 +31,7 @@ static struct opts_commit_graph {
 	int append;
 	int split;
 	int shallow;
+	int progress;
 } opts;
 
 static int graph_verify(int argc, const char **argv)
@@ -55,9 +49,13 @@ static int graph_verify(int argc, const char **argv)
 			   N_("The object directory to store the graph")),
 		OPT_BOOL(0, "shallow", &opts.shallow,
 			 N_("if the commit-graph is split, only verify the tip file")),
+		OPT_BOOL(0, "progress", &opts.progress, N_("force progress reporting")),
 		OPT_END(),
 	};
 
+	trace2_cmd_mode("verify");
+
+	opts.progress = isatty(2);
 	argc = parse_options(argc, argv, NULL,
 			     builtin_commit_graph_verify_options,
 			     builtin_commit_graph_verify_usage, 0);
@@ -66,6 +64,8 @@ static int graph_verify(int argc, const char **argv)
 		opts.obj_dir = get_object_directory();
 	if (opts.shallow)
 		flags |= COMMIT_GRAPH_VERIFY_SHALLOW;
+	if (opts.progress)
+		flags |= COMMIT_GRAPH_WRITE_PROGRESS;
 
 	graph_name = get_commit_graph_filename(opts.obj_dir);
 	open_ok = open_commit_graph(graph_name, &fd, &st);
@@ -87,64 +87,6 @@ static int graph_verify(int argc, const char **argv)
 	return verify_commit_graph(the_repository, graph, flags);
 }
 
-static int graph_read(int argc, const char **argv)
-{
-	struct commit_graph *graph = NULL;
-	char *graph_name;
-	int open_ok;
-	int fd;
-	struct stat st;
-
-	static struct option builtin_commit_graph_read_options[] = {
-		OPT_STRING(0, "object-dir", &opts.obj_dir,
-			N_("dir"),
-			N_("The object directory to store the graph")),
-		OPT_END(),
-	};
-
-	argc = parse_options(argc, argv, NULL,
-			     builtin_commit_graph_read_options,
-			     builtin_commit_graph_read_usage, 0);
-
-	if (!opts.obj_dir)
-		opts.obj_dir = get_object_directory();
-
-	graph_name = get_commit_graph_filename(opts.obj_dir);
-
-	open_ok = open_commit_graph(graph_name, &fd, &st);
-	if (!open_ok)
-		die_errno(_("Could not open commit-graph '%s'"), graph_name);
-
-	graph = load_commit_graph_one_fd_st(fd, &st);
-	if (!graph)
-		return 1;
-
-	FREE_AND_NULL(graph_name);
-
-	printf("header: %08x %d %d %d %d\n",
-		ntohl(*(uint32_t*)graph->data),
-		*(unsigned char*)(graph->data + 4),
-		*(unsigned char*)(graph->data + 5),
-		*(unsigned char*)(graph->data + 6),
-		*(unsigned char*)(graph->data + 7));
-	printf("num_commits: %u\n", graph->num_commits);
-	printf("chunks:");
-
-	if (graph->chunk_oid_fanout)
-		printf(" oid_fanout");
-	if (graph->chunk_oid_lookup)
-		printf(" oid_lookup");
-	if (graph->chunk_commit_data)
-		printf(" commit_metadata");
-	if (graph->chunk_extra_edges)
-		printf(" extra_edges");
-	printf("\n");
-
-	UNLEAK(graph);
-
-	return 0;
-}
-
 extern int read_replace_refs;
 static struct split_commit_graph_opts split_opts;
 
@@ -154,7 +96,7 @@ static int graph_write(int argc, const char **argv)
 	struct string_list *commit_hex = NULL;
 	struct string_list lines;
 	int result = 0;
-	unsigned int flags = COMMIT_GRAPH_PROGRESS;
+	enum commit_graph_write_flags flags = 0;
 
 	static struct option builtin_commit_graph_write_options[] = {
 		OPT_STRING(0, "object-dir", &opts.obj_dir,
@@ -168,6 +110,7 @@ static int graph_write(int argc, const char **argv)
 			N_("start walk at commits listed by stdin")),
 		OPT_BOOL(0, "append", &opts.append,
 			N_("include all commits already in the commit-graph file")),
+		OPT_BOOL(0, "progress", &opts.progress, N_("force progress reporting")),
 		OPT_BOOL(0, "split", &opts.split,
 			N_("allow writing an incremental commit-graph file")),
 		OPT_INTEGER(0, "max-commits", &split_opts.max_commits,
@@ -179,9 +122,12 @@ static int graph_write(int argc, const char **argv)
 		OPT_END(),
 	};
 
+	opts.progress = isatty(2);
 	split_opts.size_multiple = 2;
 	split_opts.max_commits = 0;
 	split_opts.expire_time = 0;
+
+	trace2_cmd_mode("write");
 
 	argc = parse_options(argc, argv, NULL,
 			     builtin_commit_graph_write_options,
@@ -192,9 +138,11 @@ static int graph_write(int argc, const char **argv)
 	if (!opts.obj_dir)
 		opts.obj_dir = get_object_directory();
 	if (opts.append)
-		flags |= COMMIT_GRAPH_APPEND;
+		flags |= COMMIT_GRAPH_WRITE_APPEND;
 	if (opts.split)
-		flags |= COMMIT_GRAPH_SPLIT;
+		flags |= COMMIT_GRAPH_WRITE_SPLIT;
+	if (opts.progress)
+		flags |= COMMIT_GRAPH_WRITE_PROGRESS;
 
 	read_replace_refs = 0;
 
@@ -213,8 +161,10 @@ static int graph_write(int argc, const char **argv)
 
 		if (opts.stdin_packs)
 			pack_indexes = &lines;
-		if (opts.stdin_commits)
+		if (opts.stdin_commits) {
 			commit_hex = &lines;
+			flags |= COMMIT_GRAPH_WRITE_CHECK_OIDS;
+		}
 
 		UNLEAK(buf);
 	}
@@ -249,9 +199,9 @@ int cmd_commit_graph(int argc, const char **argv, const char *prefix)
 			     builtin_commit_graph_usage,
 			     PARSE_OPT_STOP_AT_NON_OPTION);
 
+	save_commit_buffer = 0;
+
 	if (argc > 0) {
-		if (!strcmp(argv[0], "read"))
-			return graph_read(argc, argv);
 		if (!strcmp(argv[0], "verify"))
 			return graph_verify(argc, argv);
 		if (!strcmp(argv[0], "write"))

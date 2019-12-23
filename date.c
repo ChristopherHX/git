@@ -64,16 +64,16 @@ static time_t gm_time_t(timestamp_t time, int tz)
  * thing, which means that tz -0100 is passed in as the integer -100,
  * even though it means "sixty minutes off"
  */
-static struct tm *time_to_tm(timestamp_t time, int tz)
+static struct tm *time_to_tm(timestamp_t time, int tz, struct tm *tm)
 {
 	time_t t = gm_time_t(time, tz);
-	return gmtime(&t);
+	return gmtime_r(&t, tm);
 }
 
-static struct tm *time_to_tm_local(timestamp_t time)
+static struct tm *time_to_tm_local(timestamp_t time, struct tm *tm)
 {
 	time_t t = time;
-	return localtime(&t);
+	return localtime_r(&t, tm);
 }
 
 /*
@@ -128,16 +128,17 @@ static void get_time(struct timeval *now)
 		gettimeofday(now, NULL);
 }
 
-void show_date_relative(timestamp_t time,
-			const struct timeval *now,
-			struct strbuf *timebuf)
+void show_date_relative(timestamp_t time, struct strbuf *timebuf)
 {
+	struct timeval now;
 	timestamp_t diff;
-	if (now->tv_sec < time) {
+
+	get_time(&now);
+	if (now.tv_sec < time) {
 		strbuf_addstr(timebuf, _("in the future"));
 		return;
 	}
-	diff = now->tv_sec - time;
+	diff = now.tv_sec - time;
 	if (diff < 90) {
 		strbuf_addf(timebuf,
 			 Q_("%"PRItime" second ago", "%"PRItime" seconds ago", diff), diff);
@@ -240,9 +241,7 @@ static void show_date_normal(struct strbuf *buf, timestamp_t time, struct tm *tm
 
 	/* Show "today" times as just relative times */
 	if (hide.wday) {
-		struct timeval now;
-		get_time(&now);
-		show_date_relative(time, &now, buf);
+		show_date_relative(time, buf);
 		return;
 	}
 
@@ -284,6 +283,7 @@ static void show_date_normal(struct strbuf *buf, timestamp_t time, struct tm *tm
 const char *show_date(timestamp_t time, int tz, const struct date_mode *mode)
 {
 	struct tm *tm;
+	struct tm tmbuf = { 0 };
 	struct tm human_tm = { 0 };
 	int human_tz = -1;
 	static struct strbuf timebuf = STRBUF_INIT;
@@ -313,20 +313,17 @@ const char *show_date(timestamp_t time, int tz, const struct date_mode *mode)
 	}
 
 	if (mode->type == DATE_RELATIVE) {
-		struct timeval now;
-
 		strbuf_reset(&timebuf);
-		get_time(&now);
-		show_date_relative(time, &now, &timebuf);
+		show_date_relative(time, &timebuf);
 		return timebuf.buf;
 	}
 
 	if (mode->local)
-		tm = time_to_tm_local(time);
+		tm = time_to_tm_local(time, &tmbuf);
 	else
-		tm = time_to_tm(time, tz);
+		tm = time_to_tm(time, tz, &tmbuf);
 	if (!tm) {
-		tm = time_to_tm(0, 0);
+		tm = time_to_tm(0, 0, &tmbuf);
 		tz = 0;
 	}
 
@@ -963,10 +960,11 @@ void datestamp(struct strbuf *out)
 {
 	time_t now;
 	int offset;
+	struct tm tm = { 0 };
 
 	time(&now);
 
-	offset = tm_to_time_t(localtime(&now)) - now;
+	offset = tm_to_time_t(localtime_r(&now, &tm)) - now;
 	offset /= 60;
 
 	date_string(now, offset, out);
@@ -1288,15 +1286,18 @@ static timestamp_t approxidate_str(const char *date,
 	return (timestamp_t)update_tm(&tm, &now, 0);
 }
 
-timestamp_t approxidate_relative(const char *date, const struct timeval *tv)
+timestamp_t approxidate_relative(const char *date)
 {
+	struct timeval tv;
 	timestamp_t timestamp;
 	int offset;
 	int errors = 0;
 
 	if (!parse_date_basic(date, &timestamp, &offset))
 		return timestamp;
-	return approxidate_str(date, tv, &errors);
+
+	get_time(&tv);
+	return approxidate_str(date, (const struct timeval *) &tv, &errors);
 }
 
 timestamp_t approxidate_careful(const char *date, int *error_ret)

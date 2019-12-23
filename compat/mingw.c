@@ -114,6 +114,7 @@ int err_win_to_posix(DWORD winerr)
 	case ERROR_SHARING_BUFFER_EXCEEDED: error = ENFILE; break;
 	case ERROR_SHARING_VIOLATION: error = EACCES; break;
 	case ERROR_STACK_OVERFLOW: error = ENOMEM; break;
+	case ERROR_SUCCESS: BUG("err_win_to_posix() called without an error!");
 	case ERROR_SWAPERROR: error = ENOENT; break;
 	case ERROR_TOO_MANY_MODULES: error = EMFILE; break;
 	case ERROR_TOO_MANY_OPEN_FILES: error = EMFILE; break;
@@ -212,6 +213,7 @@ enum hide_dotfiles_type {
 	HIDE_DOTFILES_DOTGITONLY
 };
 
+static int core_restrict_inherited_handles = -1;
 static enum hide_dotfiles_type hide_dotfiles = HIDE_DOTFILES_DOTGITONLY;
 static char *unset_environment_variables;
 
@@ -228,6 +230,15 @@ int mingw_core_config(const char *var, const char *value, void *cb)
 	if (!strcmp(var, "core.unsetenvvars")) {
 		free(unset_environment_variables);
 		unset_environment_variables = xstrdup(value);
+		return 0;
+	}
+
+	if (!strcmp(var, "core.restrictinheritedhandles")) {
+		if (value && !strcasecmp(value, "auto"))
+			core_restrict_inherited_handles = -1;
+		else
+			core_restrict_inherited_handles =
+				git_config_bool(var, value);
 		return 0;
 	}
 
@@ -363,6 +374,8 @@ static inline int needs_hiding(const char *path)
 			/* ignore trailing slashes */
 			if (*path)
 				basename = path;
+			else
+				break;
 		}
 
 	if (hide_dotfiles == HIDE_DOTFILES_TRUE)
@@ -390,6 +403,12 @@ int mingw_mkdir(const char *path, int mode)
 {
 	int ret;
 	wchar_t wpath[MAX_PATH];
+
+	if (!is_valid_win32_path(path)) {
+		errno = EINVAL;
+		return -1;
+	}
+
 	if (xutftowcs_path(wpath, path) < 0)
 		return -1;
 	ret = _wmkdir(wpath);
@@ -463,13 +482,18 @@ int mingw_open (const char *filename, int oflags, ...)
 	typedef int (*open_fn_t)(wchar_t const *wfilename, int oflags, ...);
 	va_list args;
 	unsigned mode;
-	int fd;
+	int fd, create = (oflags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL);
 	wchar_t wfilename[MAX_PATH];
 	open_fn_t open_fn;
 
 	va_start(args, oflags);
 	mode = va_arg(args, int);
 	va_end(args);
+
+	if (!is_valid_win32_path(filename)) {
+		errno = create ? EINVAL : ENOENT;
+		return -1;
+	}
 
 	if (filename && !strcmp(filename, "/dev/null"))
 		filename = "nul";
@@ -537,6 +561,11 @@ FILE *mingw_fopen (const char *filename, const char *otype)
 	int hide = needs_hiding(filename);
 	FILE *file;
 	wchar_t wfilename[MAX_PATH], wotype[4];
+	if (!is_valid_win32_path(filename)) {
+		int create = otype && strchr(otype, 'w');
+		errno = create ? EINVAL : ENOENT;
+		return NULL;
+	}
 	if (filename && !strcmp(filename, "/dev/null"))
 		filename = "nul";
 	if (xutftowcs_path(wfilename, filename) < 0 ||
@@ -559,6 +588,11 @@ FILE *mingw_freopen (const char *filename, const char *otype, FILE *stream)
 	int hide = needs_hiding(filename);
 	FILE *file;
 	wchar_t wfilename[MAX_PATH], wotype[4];
+	if (!is_valid_win32_path(filename)) {
+		int create = otype && strchr(otype, 'w');
+		errno = create ? EINVAL : ENOENT;
+		return NULL;
+	}
 	if (filename && !strcmp(filename, "/dev/null"))
 		filename = "nul";
 	if (xutftowcs_path(wfilename, filename) < 0 ||
@@ -984,16 +1018,16 @@ int pipe(int filedes[2])
 
 struct tm *gmtime_r(const time_t *timep, struct tm *result)
 {
-	/* gmtime() in MSVCRT.DLL is thread-safe, but not reentrant */
-	memcpy(result, gmtime(timep), sizeof(struct tm));
-	return result;
+	if (gmtime_s(result, timep) == 0)
+		return result;
+	return NULL;
 }
 
 struct tm *localtime_r(const time_t *timep, struct tm *result)
 {
-	/* localtime() in MSVCRT.DLL is thread-safe, but not reentrant */
-	memcpy(result, localtime(timep), sizeof(struct tm));
-	return result;
+	if (localtime_s(result, timep) == 0)
+		return result;
+	return NULL;
 }
 
 char *mingw_getcwd(char *pointer, int len)
@@ -1052,7 +1086,7 @@ static const char *quote_arg_msvc(const char *arg)
 				p++;
 				len++;
 			}
-			if (*p == '"')
+			if (*p == '"' || !*p)
 				n += count*2 + 1;
 			continue;
 		}
@@ -1074,16 +1108,19 @@ static const char *quote_arg_msvc(const char *arg)
 				count++;
 				*d++ = *arg++;
 			}
-			if (*arg == '"') {
+			if (*arg == '"' || !*arg) {
 				while (count-- > 0)
 					*d++ = '\\';
+				/* don't escape the surrounding end quote */
+				if (!*arg)
+					break;
 				*d++ = '\\';
 			}
 		}
 		*d++ = *arg++;
 	}
 	*d++ = '"';
-	*d++ = 0;
+	*d++ = '\0';
 	return q;
 }
 
@@ -1096,13 +1133,14 @@ static const char *quote_arg_msys2(const char *arg)
 
 	for (p = arg; *p; p++) {
 		int ws = isspace(*p);
-		if (!ws && *p != '\\' && *p != '"' && *p != '{')
+		if (!ws && *p != '\\' && *p != '"' && *p != '{' && *p != '\'' &&
+		    *p != '?' && *p != '*' && *p != '~')
 			continue;
 		if (!buf.len)
 			strbuf_addch(&buf, '"');
 		if (p != p2)
 			strbuf_add(&buf, p2, p - p2);
-		if (!ws && *p != '{')
+		if (*p == '\\' || *p == '"')
 			strbuf_addch(&buf, '\\');
 		p2 = p;
 	}
@@ -1112,7 +1150,7 @@ static const char *quote_arg_msys2(const char *arg)
 	else if (!buf.len)
 		return arg;
 	else
-		strbuf_add(&buf, p2, p - p2),
+		strbuf_add(&buf, p2, p - p2);
 
 	strbuf_addch(&buf, '"');
 	return strbuf_detach(&buf, 0);
@@ -1161,14 +1199,21 @@ static char *lookup_prog(const char *dir, int dirlen, const char *cmd,
 			 int isexe, int exe_only)
 {
 	char path[MAX_PATH];
+	wchar_t wpath[MAX_PATH];
 	snprintf(path, sizeof(path), "%.*s\\%s.exe", dirlen, dir, cmd);
 
-	if (!isexe && access(path, F_OK) == 0)
+	if (xutftowcs_path(wpath, path) < 0)
+		return NULL;
+
+	if (!isexe && _waccess(wpath, F_OK) == 0)
 		return xstrdup(path);
-	path[strlen(path)-4] = '\0';
-	if ((!exe_only || isexe) && access(path, F_OK) == 0)
-		if (!(GetFileAttributes(path) & FILE_ATTRIBUTE_DIRECTORY))
+	wpath[wcslen(wpath)-4] = '\0';
+	if ((!exe_only || isexe) && _waccess(wpath, F_OK) == 0) {
+		if (!(GetFileAttributesW(wpath) & FILE_ATTRIBUTE_DIRECTORY)) {
+			path[strlen(path)-4] = '\0';
 			return xstrdup(path);
+		}
+	}
 	return NULL;
 }
 
@@ -1229,11 +1274,6 @@ static int wenvcmp(const void *a, const void *b)
 	return _wcsnicmp(p, q, p_len);
 }
 
-/* We need a stable sort to convert the environment between UTF-16 <-> UTF-8 */
-#ifndef INTERNAL_QSORT
-#include "qsort.c"
-#endif
-
 /*
  * Build an environment block combining the inherited environment
  * merged with the given list of settings.
@@ -1265,15 +1305,15 @@ static wchar_t *make_environment_block(char **deltaenv)
 		}
 
 		ALLOC_ARRAY(result, size);
-		memcpy(result, wenv, size * sizeof(*wenv));
+		COPY_ARRAY(result, wenv, size);
 		FreeEnvironmentStringsW(wenv);
 		return result;
 	}
 
 	/*
 	 * If there is a deltaenv, let's accumulate all keys into `array`,
-	 * sort them using the stable git_qsort() and then copy, skipping
-	 * duplicate keys
+	 * sort them using the stable git_stable_qsort() and then copy,
+	 * skipping duplicate keys
 	 */
 	for (p = wenv; p && *p; ) {
 		ALLOC_GROW(array, nr + 1, alloc);
@@ -1296,7 +1336,7 @@ static wchar_t *make_environment_block(char **deltaenv)
 		p += wlen + 1;
 	}
 
-	git_qsort(array, nr, sizeof(*array), wenvcmp);
+	git_stable_qsort(array, nr, sizeof(*array), wenvcmp);
 	ALLOC_ARRAY(result, size + delta_size);
 
 	for (p = result, i = 0; i < nr; i++) {
@@ -1309,7 +1349,7 @@ static wchar_t *make_environment_block(char **deltaenv)
 			continue;
 
 		size = wcslen(array[i]) + 1;
-		memcpy(p, array[i], size * sizeof(*p));
+		COPY_ARRAY(p, array[i], size);
 		p += size;
 	}
 	*p = L'\0';
@@ -1367,7 +1407,10 @@ static inline int match_last_path_component(const char *path, size_t *len,
 
 static int is_msys2_sh(const char *cmd)
 {
-	if (cmd && !strcmp(cmd, "sh")) {
+	if (!cmd)
+		return 0;
+
+	if (!strcmp(cmd, "sh")) {
 		static int ret = -1;
 		char *p;
 
@@ -1387,6 +1430,16 @@ static int is_msys2_sh(const char *cmd)
 		}
 		return ret;
 	}
+
+	if (ends_with(cmd, "\\sh.exe")) {
+		static char *sh;
+
+		if (!sh)
+			sh = path_lookup("sh", 0);
+
+		return !fspathcmp(cmd, sh);
+	}
+
 	return 0;
 }
 
@@ -1394,15 +1447,34 @@ static pid_t mingw_spawnve_fd(const char *cmd, const char **argv, char **deltaen
 			      const char *dir,
 			      int prepend_cmd, int fhin, int fhout, int fherr)
 {
-	STARTUPINFOW si;
+	static int restrict_handle_inheritance = -1;
+	STARTUPINFOEXW si;
 	PROCESS_INFORMATION pi;
+	LPPROC_THREAD_ATTRIBUTE_LIST attr_list = NULL;
+	HANDLE stdhandles[3];
+	DWORD stdhandles_count = 0;
+	SIZE_T size;
 	struct strbuf args;
 	wchar_t wcmd[MAX_PATH], wdir[MAX_PATH], *wargs, *wenvblk = NULL;
 	unsigned flags = CREATE_UNICODE_ENVIRONMENT;
 	BOOL ret;
 	HANDLE cons;
 	const char *(*quote_arg)(const char *arg) =
-		is_msys2_sh(*argv) ? quote_arg_msys2 : quote_arg_msvc;
+		is_msys2_sh(cmd ? cmd : *argv) ?
+		quote_arg_msys2 : quote_arg_msvc;
+
+	/* Make sure to override previous errors, if any */
+	errno = 0;
+
+	if (restrict_handle_inheritance < 0)
+		restrict_handle_inheritance = core_restrict_inherited_handles;
+	/*
+	 * The following code to restrict which handles are inherited seems
+	 * to work properly only on Windows 7 and later, so let's disable it
+	 * on Windows Vista and 2008.
+	 */
+	if (restrict_handle_inheritance < 0)
+		restrict_handle_inheritance = GetVersion() >> 16 >= 7601;
 
 	do_unset_environment_variables();
 
@@ -1431,11 +1503,23 @@ static pid_t mingw_spawnve_fd(const char *cmd, const char **argv, char **deltaen
 		CloseHandle(cons);
 	}
 	memset(&si, 0, sizeof(si));
-	si.cb = sizeof(si);
-	si.dwFlags = STARTF_USESTDHANDLES;
-	si.hStdInput = winansi_get_osfhandle(fhin);
-	si.hStdOutput = winansi_get_osfhandle(fhout);
-	si.hStdError = winansi_get_osfhandle(fherr);
+	si.StartupInfo.cb = sizeof(si);
+	si.StartupInfo.hStdInput = winansi_get_osfhandle(fhin);
+	si.StartupInfo.hStdOutput = winansi_get_osfhandle(fhout);
+	si.StartupInfo.hStdError = winansi_get_osfhandle(fherr);
+
+	/* The list of handles cannot contain duplicates */
+	if (si.StartupInfo.hStdInput != INVALID_HANDLE_VALUE)
+		stdhandles[stdhandles_count++] = si.StartupInfo.hStdInput;
+	if (si.StartupInfo.hStdOutput != INVALID_HANDLE_VALUE &&
+	    si.StartupInfo.hStdOutput != si.StartupInfo.hStdInput)
+		stdhandles[stdhandles_count++] = si.StartupInfo.hStdOutput;
+	if (si.StartupInfo.hStdError != INVALID_HANDLE_VALUE &&
+	    si.StartupInfo.hStdError != si.StartupInfo.hStdInput &&
+	    si.StartupInfo.hStdError != si.StartupInfo.hStdOutput)
+		stdhandles[stdhandles_count++] = si.StartupInfo.hStdError;
+	if (stdhandles_count)
+		si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
 	if (*argv && !strcmp(cmd, *argv))
 		wcmd[0] = L'\0';
@@ -1468,16 +1552,98 @@ static pid_t mingw_spawnve_fd(const char *cmd, const char **argv, char **deltaen
 	wenvblk = make_environment_block(deltaenv);
 
 	memset(&pi, 0, sizeof(pi));
-	ret = CreateProcessW(*wcmd ? wcmd : NULL, wargs, NULL, NULL, TRUE,
-		flags, wenvblk, dir ? wdir : NULL, &si, &pi);
+	if (restrict_handle_inheritance && stdhandles_count &&
+	    (InitializeProcThreadAttributeList(NULL, 1, 0, &size) ||
+	     GetLastError() == ERROR_INSUFFICIENT_BUFFER) &&
+	    (attr_list = (LPPROC_THREAD_ATTRIBUTE_LIST)
+			(HeapAlloc(GetProcessHeap(), 0, size))) &&
+	    InitializeProcThreadAttributeList(attr_list, 1, 0, &size) &&
+	    UpdateProcThreadAttribute(attr_list, 0,
+				      PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+				      stdhandles,
+				      stdhandles_count * sizeof(HANDLE),
+				      NULL, NULL)) {
+		si.lpAttributeList = attr_list;
+		flags |= EXTENDED_STARTUPINFO_PRESENT;
+	}
+
+	ret = CreateProcessW(*wcmd ? wcmd : NULL, wargs, NULL, NULL,
+			     stdhandles_count ? TRUE : FALSE,
+			     flags, wenvblk, dir ? wdir : NULL,
+			     &si.StartupInfo, &pi);
+
+	/*
+	 * On Windows 2008 R2, it seems that specifying certain types of handles
+	 * (such as FILE_TYPE_CHAR or FILE_TYPE_PIPE) will always produce an
+	 * error. Rather than playing finicky and fragile games, let's just try
+	 * to detect this situation and simply try again without restricting any
+	 * handle inheritance. This is still better than failing to create
+	 * processes.
+	 */
+	if (!ret && restrict_handle_inheritance && stdhandles_count) {
+		DWORD err = GetLastError();
+		struct strbuf buf = STRBUF_INIT;
+
+		if (err != ERROR_NO_SYSTEM_RESOURCES &&
+		    /*
+		     * On Windows 7 and earlier, handles on pipes and character
+		     * devices are inherited automatically, and cannot be
+		     * specified in the thread handle list. Rather than trying
+		     * to catch each and every corner case (and running the
+		     * chance of *still* forgetting a few), let's just fall
+		     * back to creating the process without trying to limit the
+		     * handle inheritance.
+		     */
+		    !(err == ERROR_INVALID_PARAMETER &&
+		      GetVersion() >> 16 < 9200) &&
+		    !getenv("SUPPRESS_HANDLE_INHERITANCE_WARNING")) {
+			DWORD fl = 0;
+			int i;
+
+			setenv("SUPPRESS_HANDLE_INHERITANCE_WARNING", "1", 1);
+
+			for (i = 0; i < stdhandles_count; i++) {
+				HANDLE h = stdhandles[i];
+				strbuf_addf(&buf, "handle #%d: %p (type %lx, "
+					    "handle info (%d) %lx\n", i, h,
+					    GetFileType(h),
+					    GetHandleInformation(h, &fl),
+					    fl);
+			}
+			strbuf_addstr(&buf, "\nThis is a bug; please report it "
+				      "at\nhttps://github.com/git-for-windows/"
+				      "git/issues/new\n\n"
+				      "To suppress this warning, please set "
+				      "the environment variable\n\n"
+				      "\tSUPPRESS_HANDLE_INHERITANCE_WARNING=1"
+				      "\n");
+		}
+		restrict_handle_inheritance = 0;
+		flags &= ~EXTENDED_STARTUPINFO_PRESENT;
+		ret = CreateProcessW(*wcmd ? wcmd : NULL, wargs, NULL, NULL,
+				     TRUE, flags, wenvblk, dir ? wdir : NULL,
+				     &si.StartupInfo, &pi);
+		if (!ret)
+			errno = err_win_to_posix(GetLastError());
+		if (ret && buf.len) {
+			warning("failed to restrict file handles (%ld)\n\n%s",
+				err, buf.buf);
+		}
+		strbuf_release(&buf);
+	} else if (!ret)
+		errno = err_win_to_posix(GetLastError());
+
+	if (si.lpAttributeList)
+		DeleteProcThreadAttributeList(si.lpAttributeList);
+	if (attr_list)
+		HeapFree(GetProcessHeap(), 0, attr_list);
 
 	free(wenvblk);
 	free(wargs);
 
-	if (!ret) {
-		errno = ENOENT;
+	if (!ret)
 		return -1;
-	}
+
 	CloseHandle(pi.hThread);
 
 	/*
@@ -1562,7 +1728,7 @@ static int try_shell_exec(const char *cmd, char *const *argv)
 		while (argv[argc]) argc++;
 		ALLOC_ARRAY(argv2, argc + 1);
 		argv2[0] = (char *)cmd;	/* full path to the script file */
-		memcpy(&argv2[1], &argv[1], sizeof(*argv) * argc);
+		COPY_ARRAY(&argv2[1], &argv[1], argc);
 		exec_id = trace2_exec(prog, argv2);
 		pid = mingw_spawnv(prog, argv2, 1);
 		if (pid >= 0) {
@@ -1663,6 +1829,8 @@ char *mingw_getenv(const char *name)
 	if (!w_key)
 		die("Out of memory, (tried to allocate %u wchar_t's)", len_key);
 	xutftowcs(w_key, name, len_key);
+	/* GetEnvironmentVariableW() only sets the last error upon failure */
+	SetLastError(ERROR_SUCCESS);
 	len_value = GetEnvironmentVariableW(w_key, w_value, ARRAY_SIZE(w_value));
 	if (!len_value && GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
 		free(w_key);
@@ -2358,6 +2526,50 @@ static void setup_windows_environment(void)
 		/* use $USERPROFILE if the home share is not available */
 		if (!tmp && (tmp = getenv("USERPROFILE")))
 			setenv("HOME", tmp, 1);
+	}
+}
+
+int is_valid_win32_path(const char *path)
+{
+	int preceding_space_or_period = 0, i = 0, periods = 0;
+
+	if (!protect_ntfs)
+		return 1;
+
+	skip_dos_drive_prefix((char **)&path);
+
+	for (;;) {
+		char c = *(path++);
+		switch (c) {
+		case '\0':
+		case '/': case '\\':
+			/* cannot end in ` ` or `.`, except for `.` and `..` */
+			if (preceding_space_or_period &&
+			    (i != periods || periods > 2))
+				return 0;
+			if (!c)
+				return 1;
+
+			i = periods = preceding_space_or_period = 0;
+			continue;
+		case '.':
+			periods++;
+			/* fallthru */
+		case ' ':
+			preceding_space_or_period = 1;
+			i++;
+			continue;
+		case ':': /* DOS drive prefix was already skipped */
+		case '<': case '>': case '"': case '|': case '?': case '*':
+			/* illegal character */
+			return 0;
+		default:
+			if (c > '\0' && c < '\x20')
+				/* illegal character */
+				return 0;
+		}
+		preceding_space_or_period = 0;
+		i++;
 	}
 }
 

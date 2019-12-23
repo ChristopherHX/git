@@ -6,7 +6,6 @@
 #include "mergesort.h"
 #include "packfile.h"
 #include "delta.h"
-#include "list.h"
 #include "streaming.h"
 #include "sha1-lookup.h"
 #include "commit.h"
@@ -17,14 +16,15 @@
 #include "object-store.h"
 #include "midx.h"
 #include "commit-graph.h"
+#include "promisor-remote.h"
 
 char *odb_pack_name(struct strbuf *buf,
-		    const unsigned char *sha1,
+		    const unsigned char *hash,
 		    const char *ext)
 {
 	strbuf_reset(buf);
 	strbuf_addf(buf, "%s/pack/pack-%s.%s", get_object_directory(),
-		    sha1_to_hex(sha1), ext);
+		    hash_to_hex(hash), ext);
 	return buf->buf;
 }
 
@@ -285,13 +285,6 @@ static int unuse_one_window(struct packed_git *current)
 		return 1;
 	}
 	return 0;
-}
-
-void release_pack_memory(size_t need)
-{
-	size_t cur = pack_mapped;
-	while (need >= (cur - pack_mapped) && unuse_one_window(NULL))
-		; /* nothing */
 }
 
 void close_pack_windows(struct packed_git *p)
@@ -710,22 +703,11 @@ void unuse_pack(struct pack_window **w_cursor)
 	}
 }
 
-static void try_to_free_pack_memory(size_t size)
-{
-	release_pack_memory(size);
-}
-
 struct packed_git *add_packed_git(const char *path, size_t path_len, int local)
 {
-	static int have_set_try_to_free_routine;
 	struct stat st;
 	size_t alloc;
 	struct packed_git *p;
-
-	if (!have_set_try_to_free_routine) {
-		have_set_try_to_free_routine = 1;
-		set_try_to_free_routine(try_to_free_pack_memory);
-	}
 
 	/*
 	 * Make sure a corresponding .pack file exists and that
@@ -775,6 +757,9 @@ void install_packed_git(struct repository *r, struct packed_git *pack)
 
 	pack->next = r->objects->packed_git;
 	r->objects->packed_git = pack;
+
+	hashmap_entry_init(&pack->packmap_ent, strhash(pack->pack_name));
+	hashmap_add(&r->objects->pack_map, &pack->packmap_ent);
 }
 
 void (*report_garbage)(unsigned seen_bits, const char *path);
@@ -874,20 +859,18 @@ static void prepare_pack(const char *full_name, size_t full_name_len,
 
 	if (strip_suffix_mem(full_name, &base_len, ".idx") &&
 	    !(data->m && midx_contains_pack(data->m, file_name))) {
-		/* Don't reopen a pack we already have. */
-		for (p = data->r->objects->packed_git; p; p = p->next) {
-			size_t len;
-			if (strip_suffix(p->pack_name, ".pack", &len) &&
-			    len == base_len &&
-			    !memcmp(p->pack_name, full_name, len))
-				break;
-		}
+		struct hashmap_entry hent;
+		char *pack_name = xstrfmt("%.*s.pack", (int)base_len, full_name);
+		unsigned int hash = strhash(pack_name);
+		hashmap_entry_init(&hent, hash);
 
-		if (!p) {
+		/* Don't reopen a pack we already have. */
+		if (!hashmap_get(&data->r->objects->pack_map, &hent, pack_name)) {
 			p = add_packed_git(full_name, full_name_len, data->local);
 			if (p)
 				install_packed_git(data->r, p);
 		}
+		free(pack_name);
 	}
 
 	if (!report_garbage)
@@ -1361,7 +1344,7 @@ struct delta_base_cache_key {
 };
 
 struct delta_base_cache_entry {
-	struct hashmap hash;
+	struct hashmap_entry ent;
 	struct delta_base_cache_key key;
 	struct list_head lru;
 	void *data;
@@ -1381,7 +1364,7 @@ static unsigned int pack_entry_hash(struct packed_git *p, off_t base_offset)
 static struct delta_base_cache_entry *
 get_delta_base_cache_entry(struct packed_git *p, off_t base_offset)
 {
-	struct hashmap_entry entry;
+	struct hashmap_entry entry, *e;
 	struct delta_base_cache_key key;
 
 	if (!delta_base_cache.cmpfn)
@@ -1390,7 +1373,8 @@ get_delta_base_cache_entry(struct packed_git *p, off_t base_offset)
 	hashmap_entry_init(&entry, pack_entry_hash(p, base_offset));
 	key.p = p;
 	key.base_offset = base_offset;
-	return hashmap_get(&delta_base_cache, &entry, &key);
+	e = hashmap_get(&delta_base_cache, &entry, &key);
+	return e ? container_of(e, struct delta_base_cache_entry, ent) : NULL;
 }
 
 static int delta_base_cache_key_eq(const struct delta_base_cache_key *a,
@@ -1400,11 +1384,16 @@ static int delta_base_cache_key_eq(const struct delta_base_cache_key *a,
 }
 
 static int delta_base_cache_hash_cmp(const void *unused_cmp_data,
-				     const void *va, const void *vb,
+				     const struct hashmap_entry *va,
+				     const struct hashmap_entry *vb,
 				     const void *vkey)
 {
-	const struct delta_base_cache_entry *a = va, *b = vb;
+	const struct delta_base_cache_entry *a, *b;
 	const struct delta_base_cache_key *key = vkey;
+
+	a = container_of(va, const struct delta_base_cache_entry, ent);
+	b = container_of(vb, const struct delta_base_cache_entry, ent);
+
 	if (key)
 		return !delta_base_cache_key_eq(&a->key, key);
 	else
@@ -1423,7 +1412,7 @@ static int in_delta_base_cache(struct packed_git *p, off_t base_offset)
  */
 static void detach_delta_base_cache_entry(struct delta_base_cache_entry *ent)
 {
-	hashmap_remove(&delta_base_cache, ent, &ent->key);
+	hashmap_remove(&delta_base_cache, &ent->ent, &ent->key);
 	list_del(&ent->lru);
 	delta_base_cached -= ent->size;
 	free(ent);
@@ -1487,8 +1476,8 @@ static void add_delta_base_cache(struct packed_git *p, off_t base_offset,
 
 	if (!delta_base_cache.cmpfn)
 		hashmap_init(&delta_base_cache, delta_base_cache_hash_cmp, NULL, 0);
-	hashmap_entry_init(ent, pack_entry_hash(p, base_offset));
-	hashmap_add(&delta_base_cache, ent);
+	hashmap_entry_init(&ent->ent, pack_entry_hash(p, base_offset));
+	hashmap_add(&delta_base_cache, &ent->ent);
 }
 
 int packed_object_info(struct repository *r, struct packed_git *p,
@@ -2139,7 +2128,7 @@ static int add_promisor_object(const struct object_id *oid,
 			oidset_insert(set, &parents->item->object.oid);
 	} else if (obj->type == OBJ_TAG) {
 		struct tag *tag = (struct tag *) obj;
-		oidset_insert(set, &tag->tagged->oid);
+		oidset_insert(set, get_tagged_oid(tag));
 	}
 	return 0;
 }
@@ -2150,7 +2139,7 @@ int is_promisor_object(const struct object_id *oid)
 	static int promisor_objects_prepared;
 
 	if (!promisor_objects_prepared) {
-		if (repository_format_partial_clone) {
+		if (has_promisor_remote()) {
 			for_each_packed_object(add_promisor_object,
 					       &promisor_objects,
 					       FOR_EACH_OBJECT_PROMISOR_ONLY);

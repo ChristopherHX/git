@@ -356,6 +356,28 @@ test_expect_success 'status should only print one line' '
 	test_line_count = 1 lines
 '
 
+test_expect_success 'status from subdirectory should have the same SHA1' '
+	test_when_finished "rmdir addtest/subdir" &&
+	(
+		cd addtest &&
+		mkdir subdir &&
+		git submodule status >output &&
+		awk "{print \$1}" <output >expect &&
+		cd subdir &&
+		git submodule status >../output &&
+		awk "{print \$1}" <../output >../actual &&
+		test_cmp ../expect ../actual &&
+		git -C ../submod checkout HEAD^ &&
+		git submodule status >../output &&
+		awk "{print \$1}" <../output >../actual2 &&
+		cd .. &&
+		git submodule status >output &&
+		awk "{print \$1}" <output >expect2 &&
+		test_cmp expect2 actual2 &&
+		! test_cmp actual actual2
+	)
+'
+
 test_expect_success 'setup - fetch commit name from submodule' '
 	rev1=$(cd .subrepo && git rev-parse HEAD) &&
 	printf "rev1: %s\n" "$rev1" &&
@@ -527,7 +549,6 @@ test_expect_success 'update --init' '
 	test_must_fail git config submodule.example.url &&
 
 	git submodule update init 2> update.out &&
-	cat update.out &&
 	test_i18ngrep "not initialized" update.out &&
 	test_must_fail git rev-parse --resolve-git-dir init/.git &&
 
@@ -545,7 +566,6 @@ test_expect_success 'update --init from subdirectory' '
 	(
 		cd sub &&
 		git submodule update ../init 2>update.out &&
-		cat update.out &&
 		test_i18ngrep "not initialized" update.out &&
 		test_must_fail git rev-parse --resolve-git-dir ../init/.git &&
 

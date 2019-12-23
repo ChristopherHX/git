@@ -623,7 +623,7 @@ static int show_gitcomp(const struct option *opts)
  * Scan and may produce a new option[] array, which should be used
  * instead of the original 'options'.
  *
- * Right now this is only used to preprocess and substitue
+ * Right now this is only used to preprocess and substitute
  * OPTION_ALIAS.
  */
 static struct option *preprocess_options(struct parse_opt_ctx_t *ctx,
@@ -780,7 +780,8 @@ int parse_options_step(struct parse_opt_ctx_t *ctx,
 			continue;
 		}
 
-		if (!arg[2]) { /* "--" */
+		if (!arg[2] /* "--" */ ||
+		    !strcmp(arg + 2, "end-of-options")) {
 			if (!(ctx->flags & PARSE_OPT_KEEP_DASHDASH)) {
 				ctx->argc--;
 				ctx->argv++;

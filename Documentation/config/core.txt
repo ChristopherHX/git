@@ -86,7 +86,9 @@ core.untrackedCache::
 	it will automatically be removed, if set to `false`. Before
 	setting it to `true`, you should check that mtime is working
 	properly on your system.
-	See linkgit:git-update-index[1]. `keep` by default.
+	See linkgit:git-update-index[1]. `keep` by default, unless
+	`feature.manyFiles` is enabled which sets this setting to
+	`true` by default.
 
 core.checkStat::
 	When missing or is set to `default`, many fields in the stat
@@ -557,6 +559,12 @@ core.unsetenvvars::
 	Defaults to `PERL5LIB` to account for the fact that Git for
 	Windows insists on using its own Perl interpreter.
 
+core.restrictinheritedhandles::
+	Windows-only: override whether spawned processes inherit only standard
+	file handles (`stdin`, `stdout` and `stderr`) or all handles. Can be
+	`auto`, `true` or `false`. Defaults to `auto`, which means `true` on
+	Windows 7 and later, and `false` on older Windows versions.
+
 core.createObject::
 	You can set this to 'link', in which case a hardlink followed by
 	a delete of the source are used to make sure that object creation
@@ -577,7 +585,7 @@ the `GIT_NOTES_REF` environment variable.  See linkgit:git-notes[1].
 
 core.commitGraph::
 	If true, then git will read the commit-graph file (if it exists)
-	to parse the graph structure of commits. Defaults to false. See
+	to parse the graph structure of commits. Defaults to true. See
 	linkgit:git-commit-graph[1] for more information.
 
 core.useReplaceRefs::
