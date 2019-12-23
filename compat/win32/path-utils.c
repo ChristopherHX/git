@@ -1,24 +1,32 @@
 #include "../../git-compat-util.h"
 
-int win32_has_drive_prefix(char *path) {
-	if(win32_has_dos_drive_prefix(path)) {
-		return 2;
-	} else if(((path[0] == '\\' && path[1] == '\\') || (path[0] == '/' && path[1] == '/')) && path[2] == '?' && is_dir_sep(path[3])) {
-		if(win32_has_dos_drive_prefix(path + 4)) {
-			return 6;
-		} else if(!_strnicmp(path + 4, "Volume{", 7)) {
-			char* pos = strpbrk(path + 11, "\\/");
-			if(pos) {
-				return (pos - path) + 1;
-			}
-		}
-	}
-	return 0;
+int win32_has_dos_drive_prefix(const char *path)
+{
+	int i;
+
+	/*
+	 * Does it start with an ASCII letter (i.e. highest bit not set),
+	 * followed by a colon?
+	 */
+	if (!(0x80 & (unsigned char)*path))
+		return *path && path[1] == ':' ? 2 : 0;
+
+	/*
+	 * While drive letters must be letters of the English alphabet, it is
+	 * possible to assign virtually _any_ Unicode character via `subst` as
+	 * a drive letter to "virtual drives". Even `1`, or `ä`. Or fun stuff
+	 * like this:
+	 *
+	 *      subst ֍: %USERPROFILE%\Desktop
+	 */
+	for (i = 1; i < 4 && (0x80 & (unsigned char)path[i]); i++)
+		; /* skip first UTF-8 character */
+	return path[i] == ':' ? i + 1 : 0;
 }
 
-int win32_skip_drive_prefix(char **path)
+int win32_skip_dos_drive_prefix(char **path)
 {
-	int ret = win32_has_drive_prefix(*path);
+	int ret = has_dos_drive_prefix(*path);
 	*path += ret;
 	return ret;
 }

@@ -24,6 +24,7 @@
     </ItemGroup>
     <ItemGroup>
       <ClCompile Include="hashbcrypt.c" />
+      <ClCompile Include="path-utils.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/basename.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/fopen.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/memmem.c" />
@@ -43,7 +44,6 @@
       <ClCompile Include="$(ProjectDir)../../../compat/win32/dirent.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/win32/pthread.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/win32/syslog.c" />
-      <ClCompile Include="$(ProjectDir)../../../compat/win32/path-utils.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/win32/trace2_win32_process_info.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/win32mmap.c" />
       <ClCompile Include="$(ProjectDir)../../../compat/mkdtemp.c" />
