@@ -23,7 +23,7 @@ jobs:
       run: git clone https://github.com/ChristopherHX/gettext-msvc.git
     - name: Build
       working-directory: ${{ github.workspace }}\contrib\msbuild\
-      run: powershell -Command "msbuild /p:Configuration=Release /p:Platform=x64 /p:VersionsCode=$(git describe --abbrev=0) /p:CURLDIR=${{ github.workspace }}\..\curl /p:ZLIBDIR=${{ github.workspace }}\..\zlib /p:GETTEXTDIR=${{ github.workspace }}\..\gettext-msvc\gettext-0.19.8 /p:LIBICONVDIR=${{ github.workspace }}\..\gettext-msvc\libiconv-1.16"
+      run: powershell -Command "&'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe' /p:Configuration=Release /p:Platform=x64 /p:VersionsCode=$(git describe --abbrev=0) /p:CURLDIR=${{ github.workspace }}\..\curl /p:ZLIBDIR=${{ github.workspace }}\..\zlib /p:GETTEXTDIR=${{ github.workspace }}\..\gettext-msvc\gettext-0.19.8 /p:LIBICONVDIR=${{ github.workspace }}\..\gettext-msvc\libiconv-1.16"
     - uses: actions/upload-artifact@master
       with:
         name: Git(nano)
