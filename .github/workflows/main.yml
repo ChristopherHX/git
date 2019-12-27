@@ -7,7 +7,7 @@ on:
     - cron:  '0 0 * * *'
 jobs:
   update:
-    if: github.event == 'schedule'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
@@ -25,7 +25,7 @@ jobs:
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
         git push origin masterb:master
   makeCommandlist:
-    if: github.event == 'push'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
