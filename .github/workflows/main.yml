@@ -7,6 +7,7 @@ on:
     - cron:  '0 0 * * *'
 jobs:
   update:
+    if: github.event == 'schedule'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
@@ -23,14 +24,23 @@ jobs:
         git merge upstream/master
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
         git push origin masterb:master
-        make command-list.h
+  makeCommandlist:
+    if: github.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - name: Make command-list.h
+      working-directory: ${{ github.workspace }}
+      run: make command-list.h
     - name: Upload command-list.h for Windows
       uses: actions/upload-artifact@v1
       with:
         name: Commandlist
         path: command-list.h
   build:
-    needs: update
+    needs: makeCommandlist
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v1
