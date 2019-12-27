@@ -7,9 +7,9 @@
     <Patchlevel Condition="'$(Patchlevel)'==''">0</Patchlevel>
   </PropertyGroup>
   <PropertyGroup Condition="'$(VersionsCode)'!=''">
-    <Major Condition="'$(Major)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+)', '$1'))</Major>
-    <Minor Condition="'$(Minor)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+)', '$2'))</Minor>
-    <Micro Condition="'$(Micro)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+)', '$3'))</Micro>
+    <Major Condition="'$(Major)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+).*', '$1'))</Major>
+    <Minor Condition="'$(Minor)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+).*', '$2'))</Minor>
+    <Micro Condition="'$(Micro)'==''">$([System.Text.RegularExpressions.Regex]::Replace($(VersionsCode), 'v([0-9]+)\.([0-9]+)\.([0-9]+).*', '$3'))</Micro>
     <Patchlevel Condition="'$(Patchlevel)'==''">0</Patchlevel>
   </PropertyGroup>
   <ItemGroup Label="ProjectConfigurations">
