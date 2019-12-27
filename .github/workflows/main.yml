@@ -23,7 +23,7 @@ jobs:
         git checkout -b masterb
         git merge upstream/master
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
-        git push origin masterb:master
+        git push --follow-tags origin masterb:master
   makeCommandlist:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
