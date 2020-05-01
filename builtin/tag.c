@@ -17,7 +17,7 @@
 #include "diff.h"
 #include "revision.h"
 #include "gpg-interface.h"
-#include "sha1-array.h"
+#include "oid-array.h"
 #include "column.h"
 #include "ref-filter.h"
 
@@ -231,8 +231,9 @@ static void create_tag(const struct object_id *object, const char *object_ref,
 	if (type <= OBJ_NONE)
 		die(_("bad object type."));
 
-	if (type == OBJ_TAG && advice_nested_tag)
-		advise(_(message_advice_nested_tag), tag, object_ref);
+	if (type == OBJ_TAG)
+		advise_if_enabled(ADVICE_NESTED_TAG, _(message_advice_nested_tag),
+				  tag, object_ref);
 
 	strbuf_addf(&header,
 		    "object %s\n"

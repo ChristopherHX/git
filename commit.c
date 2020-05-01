@@ -927,12 +927,22 @@ struct commit *get_fork_point(const char *refname, struct commit *commit)
 	struct commit_list *bases;
 	int i;
 	struct commit *ret = NULL;
+	char *full_refname;
+
+	switch (dwim_ref(refname, strlen(refname), &oid, &full_refname)) {
+	case 0:
+		die("No such ref: '%s'", refname);
+	case 1:
+		break; /* good */
+	default:
+		die("Ambiguous refname: '%s'", refname);
+	}
 
 	memset(&revs, 0, sizeof(revs));
 	revs.initial = 1;
-	for_each_reflog_ent(refname, collect_one_reflog_ent, &revs);
+	for_each_reflog_ent(full_refname, collect_one_reflog_ent, &revs);
 
-	if (!revs.nr && !get_oid(refname, &oid))
+	if (!revs.nr)
 		add_one_commit(&oid, &revs);
 
 	for (i = 0; i < revs.nr; i++)
@@ -958,17 +968,26 @@ struct commit *get_fork_point(const char *refname, struct commit *commit)
 
 cleanup_return:
 	free_commit_list(bases);
+	free(full_refname);
 	return ret;
 }
 
-static const char gpg_sig_header[] = "gpgsig";
-static const int gpg_sig_header_len = sizeof(gpg_sig_header) - 1;
+/*
+ * Indexed by hash algorithm identifier.
+ */
+static const char *gpg_sig_headers[] = {
+	NULL,
+	"gpgsig",
+	"gpgsig-sha256",
+};
 
 static int do_sign_commit(struct strbuf *buf, const char *keyid)
 {
 	struct strbuf sig = STRBUF_INIT;
 	int inspos, copypos;
 	const char *eoh;
+	const char *gpg_sig_header = gpg_sig_headers[hash_algo_by_ptr(the_hash_algo)];
+	int gpg_sig_header_len = strlen(gpg_sig_header);
 
 	/* find the end of the header */
 	eoh = strstr(buf->buf, "\n\n");
@@ -993,7 +1012,7 @@ static int do_sign_commit(struct strbuf *buf, const char *keyid)
 			strbuf_insert(buf, inspos, gpg_sig_header, gpg_sig_header_len);
 			inspos += gpg_sig_header_len;
 		}
-		strbuf_insert(buf, inspos++, " ", 1);
+		strbuf_insertstr(buf, inspos++, " ");
 		strbuf_insert(buf, inspos, bol, len);
 		inspos += len;
 		copypos += len;
@@ -1010,6 +1029,8 @@ int parse_signed_commit(const struct commit *commit,
 	const char *buffer = get_commit_buffer(commit, &size);
 	int in_signature, saw_signature = -1;
 	const char *line, *tail;
+	const char *gpg_sig_header = gpg_sig_headers[hash_algo_by_ptr(the_hash_algo)];
+	int gpg_sig_header_len = strlen(gpg_sig_header);
 
 	line = buffer;
 	tail = buffer + size;
@@ -1056,11 +1077,17 @@ int remove_signature(struct strbuf *buf)
 
 		if (in_signature && line[0] == ' ')
 			sig_end = next;
-		else if (starts_with(line, gpg_sig_header) &&
-			 line[gpg_sig_header_len] == ' ') {
-			sig_start = line;
-			sig_end = next;
-			in_signature = 1;
+		else if (starts_with(line, "gpgsig")) {
+			int i;
+			for (i = 1; i < GIT_HASH_NALGOS; i++) {
+				const char *p;
+				if (skip_prefix(line, gpg_sig_headers[i], &p) &&
+				    *p == ' ') {
+					sig_start = line;
+					sig_end = next;
+					in_signature = 1;
+				}
+			}
 		} else {
 			if (*line == '\n')
 				/* dump the whole remainder of the buffer */

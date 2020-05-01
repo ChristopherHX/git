@@ -1073,7 +1073,8 @@ static int upload_pack_config(const char *var, const char *value, void *unused)
 		precomposed_unicode = git_config_bool(var, value);
 	}
 
-	if (current_config_scope() != CONFIG_SCOPE_REPO) {
+	if (current_config_scope() != CONFIG_SCOPE_LOCAL &&
+	current_config_scope() != CONFIG_SCOPE_WORKTREE) {
 		if (!strcmp("uploadpack.packobjectshook", var))
 			return git_config_string(&pack_objects_hook, var, value);
 	}
@@ -1251,7 +1252,7 @@ static void process_args(struct packet_reader *request,
 			 struct upload_pack_data *data,
 			 struct object_array *want_obj)
 {
-	while (packet_reader_read(request) != PACKET_READ_FLUSH) {
+	while (packet_reader_read(request) == PACKET_READ_NORMAL) {
 		const char *arg = request->line;
 		const char *p;
 
@@ -1320,6 +1321,9 @@ static void process_args(struct packet_reader *request,
 		/* ignore unknown lines maybe? */
 		die("unexpected line: '%s'", arg);
 	}
+
+	if (request->status != PACKET_READ_FLUSH)
+		die(_("expected flush after fetch arguments"));
 }
 
 static int process_haves(struct oid_array *haves, struct oid_array *common,

@@ -16,7 +16,7 @@ test_expect_success 'setup' '
 
 test_expect_success '"verify" needs a worktree' '
 	git bundle create tip.bundle -1 master &&
-	test_must_fail nongit git bundle verify ../tip.bundle 2>err &&
+	nongit test_must_fail git bundle verify ../tip.bundle 2>err &&
 	test_i18ngrep "need a repository" err
 '
 
@@ -64,7 +64,7 @@ test_expect_success 'ridiculously long subject in boundary' '
 	test -s heads &&
 	git fetch long-subject-bundle.bdl &&
 	sed -n "/^-/{p;q;}" long-subject-bundle.bdl >boundary &&
-	grep "^-[0-9a-f]\\{40\\} " boundary
+	grep "^-$OID_REGEX " boundary
 '
 
 test_expect_success 'prerequisites with an empty commit message' '

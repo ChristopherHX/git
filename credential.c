@@ -6,6 +6,7 @@
 #include "url.h"
 #include "prompt.h"
 #include "sigchain.h"
+#include "urlmatch.h"
 
 void credential_init(struct credential *c)
 {
@@ -40,7 +41,7 @@ static int credential_config_callback(const char *var, const char *value,
 				      void *data)
 {
 	struct credential *c = data;
-	const char *key, *dot;
+	const char *key;
 
 	if (!skip_prefix(var, "credential.", &key))
 		return 0;
@@ -48,31 +49,16 @@ static int credential_config_callback(const char *var, const char *value,
 	if (!value)
 		return config_error_nonbool(var);
 
-	dot = strrchr(key, '.');
-	if (dot) {
-		struct credential want = CREDENTIAL_INIT;
-		char *url = xmemdupz(key, dot - key);
-		int matched;
-
-		credential_from_url(&want, url);
-		matched = credential_match(&want, c);
-
-		credential_clear(&want);
-		free(url);
-
-		if (!matched)
-			return 0;
-		key = dot + 1;
-	}
-
 	if (!strcmp(key, "helper")) {
 		if (*value)
 			string_list_append(&c->helpers, value);
 		else
 			string_list_clear(&c->helpers, 0);
 	} else if (!strcmp(key, "username")) {
-		if (!c->username)
+		if (!c->username_from_proto) {
+			free(c->username);
 			c->username = xstrdup(value);
+		}
 	}
 	else if (!strcmp(key, "usehttppath"))
 		c->use_http_path = git_config_bool(var, value);
@@ -87,11 +73,43 @@ static int proto_is_http(const char *s)
 	return !strcmp(s, "https") || !strcmp(s, "http");
 }
 
+static void credential_describe(struct credential *c, struct strbuf *out);
+static void credential_format(struct credential *c, struct strbuf *out);
+
+static int select_all(const struct urlmatch_item *a,
+		      const struct urlmatch_item *b)
+{
+	return 0;
+}
+
 static void credential_apply_config(struct credential *c)
 {
+	char *normalized_url;
+	struct urlmatch_config config = { STRING_LIST_INIT_DUP };
+	struct strbuf url = STRBUF_INIT;
+
+	if (!c->host)
+		die(_("refusing to work with credential missing host field"));
+	if (!c->protocol)
+		die(_("refusing to work with credential missing protocol field"));
+
 	if (c->configured)
 		return;
-	git_config(credential_config_callback, c);
+
+	config.section = "credential";
+	config.key = NULL;
+	config.collect_fn = credential_config_callback;
+	config.cascade_fn = NULL;
+	config.select_fn = select_all;
+	config.cb = c;
+
+	credential_format(c, &url);
+	normalized_url = url_normalize(url.buf, &config.url);
+
+	git_config(urlmatch_config_entry, &config);
+	free(normalized_url);
+	strbuf_release(&url);
+
 	c->configured = 1;
 
 	if (!c->use_http_path && proto_is_http(c->protocol)) {
@@ -110,6 +128,23 @@ static void credential_describe(struct credential *c, struct strbuf *out)
 		strbuf_addstr(out, c->host);
 	if (c->path)
 		strbuf_addf(out, "/%s", c->path);
+}
+
+static void credential_format(struct credential *c, struct strbuf *out)
+{
+	if (!c->protocol)
+		return;
+	strbuf_addf(out, "%s://", c->protocol);
+	if (c->username && *c->username) {
+		strbuf_add_percentencode(out, c->username);
+		strbuf_addch(out, '@');
+	}
+	if (c->host)
+		strbuf_addstr(out, c->host);
+	if (c->path) {
+		strbuf_addch(out, '/');
+		strbuf_add_percentencode(out, c->path);
+	}
 }
 
 static char *credential_ask_one(const char *what, struct credential *c,
@@ -163,6 +198,7 @@ int credential_read(struct credential *c, FILE *fp)
 		if (!strcmp(key, "username")) {
 			free(c->username);
 			c->username = xstrdup(value);
+			c->username_from_proto = 1;
 		} else if (!strcmp(key, "password")) {
 			free(c->password);
 			c->password = xstrdup(value);
@@ -191,20 +227,25 @@ int credential_read(struct credential *c, FILE *fp)
 	return 0;
 }
 
-static void credential_write_item(FILE *fp, const char *key, const char *value)
+static void credential_write_item(FILE *fp, const char *key, const char *value,
+				  int required)
 {
+	if (!value && required)
+		BUG("credential value for %s is missing", key);
 	if (!value)
 		return;
+	if (strchr(value, '\n'))
+		die("credential value for %s contains newline", key);
 	fprintf(fp, "%s=%s\n", key, value);
 }
 
 void credential_write(const struct credential *c, FILE *fp)
 {
-	credential_write_item(fp, "protocol", c->protocol);
-	credential_write_item(fp, "host", c->host);
-	credential_write_item(fp, "path", c->path);
-	credential_write_item(fp, "username", c->username);
-	credential_write_item(fp, "password", c->password);
+	credential_write_item(fp, "protocol", c->protocol, 1);
+	credential_write_item(fp, "host", c->host, 1);
+	credential_write_item(fp, "path", c->path, 0);
+	credential_write_item(fp, "username", c->username, 0);
+	credential_write_item(fp, "password", c->password, 0);
 }
 
 static int run_credential_helper(struct credential *c,
@@ -322,7 +363,22 @@ void credential_reject(struct credential *c)
 	c->approved = 0;
 }
 
-void credential_from_url(struct credential *c, const char *url)
+static int check_url_component(const char *url, int quiet,
+			       const char *name, const char *value)
+{
+	if (!value)
+		return 0;
+	if (!strchr(value, '\n'))
+		return 0;
+
+	if (!quiet)
+		warning(_("url contains a newline in its %s component: %s"),
+			name, url);
+	return -1;
+}
+
+int credential_from_url_gently(struct credential *c, const char *url,
+			       int quiet)
 {
 	const char *at, *colon, *cp, *slash, *host, *proto_end;
 
@@ -335,12 +391,22 @@ void credential_from_url(struct credential *c, const char *url)
 	 *   (3) proto://<user>:<pass>@<host>/...
 	 */
 	proto_end = strstr(url, "://");
-	if (!proto_end)
-		return;
+	if (!proto_end || proto_end == url) {
+		if (!quiet)
+			warning(_("url has no scheme: %s"), url);
+		return -1;
+	}
 	cp = proto_end + 3;
 	at = strchr(cp, '@');
 	colon = strchr(cp, ':');
-	slash = strchrnul(cp, '/');
+
+	/*
+	 * A query or fragment marker before the slash ends the host portion.
+	 * We'll just continue to call this "slash" for simplicity. Notably our
+	 * "trim leading slashes" part won't skip over this part of the path,
+	 * but that's what we'd want.
+	 */
+	slash = cp + strcspn(cp, "/?#");
 
 	if (!at || slash <= at) {
 		/* Case (1) */
@@ -349,18 +415,20 @@ void credential_from_url(struct credential *c, const char *url)
 	else if (!colon || at <= colon) {
 		/* Case (2) */
 		c->username = url_decode_mem(cp, at - cp);
+		if (c->username && *c->username)
+			c->username_from_proto = 1;
 		host = at + 1;
 	} else {
 		/* Case (3) */
 		c->username = url_decode_mem(cp, colon - cp);
+		if (c->username && *c->username)
+			c->username_from_proto = 1;
 		c->password = url_decode_mem(colon + 1, at - (colon + 1));
 		host = at + 1;
 	}
 
-	if (proto_end - url > 0)
-		c->protocol = xmemdupz(url, proto_end - url);
-	if (slash - host > 0)
-		c->host = url_decode_mem(host, slash - host);
+	c->protocol = xmemdupz(url, proto_end - url);
+	c->host = url_decode_mem(host, slash - host);
 	/* Trim leading and trailing slashes from path */
 	while (*slash == '/')
 		slash++;
@@ -371,4 +439,19 @@ void credential_from_url(struct credential *c, const char *url)
 		while (p > c->path && *p == '/')
 			*p-- = '\0';
 	}
+
+	if (check_url_component(url, quiet, "username", c->username) < 0 ||
+	    check_url_component(url, quiet, "password", c->password) < 0 ||
+	    check_url_component(url, quiet, "protocol", c->protocol) < 0 ||
+	    check_url_component(url, quiet, "host", c->host) < 0 ||
+	    check_url_component(url, quiet, "path", c->path) < 0)
+		return -1;
+
+	return 0;
+}
+
+void credential_from_url(struct credential *c, const char *url)
+{
+	if (credential_from_url_gently(c, url, 0) < 0)
+		die(_("credential url cannot be parsed: %s"), url);
 }

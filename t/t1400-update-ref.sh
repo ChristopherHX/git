@@ -361,55 +361,67 @@ ld="Thu, 26 May 2005 18:43:00 -0500"
 test_expect_success 'Query "master@{May 25 2005}" (before history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{May 25 2005}" >o 2>e &&
-	test $C = $(cat o) &&
-	test "warning: Log for '\''master'\'' only goes back to $ed." = "$(cat e)"
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''master'\'' only goes back to $ed" >expect &&
+	test_i18ncmp expect e
 '
 test_expect_success 'Query master@{2005-05-25} (before history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify master@{2005-05-25} >o 2>e &&
-	test $C = $(cat o) &&
-	test "warning: Log for '\''master'\'' only goes back to $ed." = "$(cat e)"
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''master'\'' only goes back to $ed" >expect &&
+	test_i18ncmp expect e
 '
 test_expect_success 'Query "master@{May 26 2005 23:31:59}" (1 second before history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{May 26 2005 23:31:59}" >o 2>e &&
-	test $C = $(cat o) &&
-	test "warning: Log for '\''master'\'' only goes back to $ed." = "$(cat e)"
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''master'\'' only goes back to $ed" >expect &&
+	test_i18ncmp expect e
 '
 test_expect_success 'Query "master@{May 26 2005 23:32:00}" (exactly history start)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{May 26 2005 23:32:00}" >o 2>e &&
-	test $C = $(cat o) &&
+	echo "$C" >expect &&
+	test_cmp expect o &&
 	test_must_be_empty e
 '
 test_expect_success 'Query "master@{May 26 2005 23:32:30}" (first non-creation change)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{May 26 2005 23:32:30}" >o 2>e &&
-	test $A = $(cat o) &&
+	echo "$A" >expect &&
+	test_cmp expect o &&
 	test_must_be_empty e
 '
 test_expect_success 'Query "master@{2005-05-26 23:33:01}" (middle of history with gap)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{2005-05-26 23:33:01}" >o 2>e &&
-	test $B = $(cat o) &&
+	echo "$B" >expect &&
+	test_cmp expect o &&
 	test_i18ngrep -F "warning: log for ref $m has gap after $gd" e
 '
 test_expect_success 'Query "master@{2005-05-26 23:38:00}" (middle of history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{2005-05-26 23:38:00}" >o 2>e &&
-	test $Z = $(cat o) &&
+	echo "$Z" >expect &&
+	test_cmp expect o &&
 	test_must_be_empty e
 '
 test_expect_success 'Query "master@{2005-05-26 23:43:00}" (exact end of history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{2005-05-26 23:43:00}" >o 2>e &&
-	test $E = $(cat o) &&
+	echo "$E" >expect &&
+	test_cmp expect o &&
 	test_must_be_empty e
 '
 test_expect_success 'Query "master@{2005-05-28}" (past end of history)' '
 	test_when_finished "rm -f o e" &&
 	git rev-parse --verify "master@{2005-05-28}" >o 2>e &&
-	test $D = $(cat o) &&
+	echo "$D" >expect &&
+	test_cmp expect o &&
 	test_i18ngrep -F "warning: log for ref $m unexpectedly ended on $ld" e
 '
 
@@ -1390,6 +1402,137 @@ test_expect_success 'handle per-worktree refs in refs/bisect' '
 	git update-ref refs/bisect/something HEAD &&
 	git rev-parse refs/bisect/something >main-head &&
 	! test_cmp main-head worktree-head
+'
+
+test_expect_success 'transaction handles empty commit' '
+	cat >stdin <<-EOF &&
+	start
+	prepare
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare commit >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles empty commit with missing prepare' '
+	cat >stdin <<-EOF &&
+	start
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start commit >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles sole commit' '
+	cat >stdin <<-EOF &&
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" commit >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles empty abort' '
+	cat >stdin <<-EOF &&
+	start
+	prepare
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare abort >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction exits on multiple aborts' '
+	cat >stdin <<-EOF &&
+	abort
+	abort
+	EOF
+	test_must_fail git update-ref --stdin <stdin >actual 2>err &&
+	printf "%s: ok\n" abort >expect &&
+	test_cmp expect actual &&
+	grep "fatal: transaction is closed" err
+'
+
+test_expect_success 'transaction exits on start after prepare' '
+	cat >stdin <<-EOF &&
+	prepare
+	start
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err >actual &&
+	printf "%s: ok\n" prepare >expect &&
+	test_cmp expect actual &&
+	grep "fatal: prepared transactions can only be closed" err
+'
+
+test_expect_success 'transaction handles empty abort with missing prepare' '
+	cat >stdin <<-EOF &&
+	start
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start abort >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles sole abort' '
+	cat >stdin <<-EOF &&
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" abort >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction can handle commit' '
+	cat >stdin <<-EOF &&
+	start
+	create $a HEAD
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start commit >expect &&
+	test_cmp expect actual &&
+	git rev-parse HEAD >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction can handle abort' '
+	cat >stdin <<-EOF &&
+	start
+	create $b HEAD
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start abort >expect &&
+	test_cmp expect actual &&
+	test_path_is_missing .git/$b
+'
+
+test_expect_success 'transaction aborts by default' '
+	cat >stdin <<-EOF &&
+	start
+	create $b HEAD
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start >expect &&
+	test_cmp expect actual &&
+	test_path_is_missing .git/$b
+'
+
+test_expect_success 'transaction with prepare aborts by default' '
+	cat >stdin <<-EOF &&
+	start
+	create $b HEAD
+	prepare
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare >expect &&
+	test_cmp expect actual &&
+	test_path_is_missing .git/$b
 '
 
 test_done

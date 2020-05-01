@@ -220,12 +220,12 @@ Example
 ; affected by the condition
 [includeIf "gitdir:/path/to/group/"]
 	path = foo.inc
-----
 
-	; include only if we are in a worktree where foo-branch is
-	; currently checked out
-	[includeIf "onbranch:foo-branch"]
-		path = foo.inc
+; include only if we are in a worktree where foo-branch is
+; currently checked out
+[includeIf "onbranch:foo-branch"]
+	path = foo.inc
+----
 
 Values
 ~~~~~~
@@ -263,7 +263,9 @@ color::
 +
 The basic colors accepted are `normal`, `black`, `red`, `green`, `yellow`,
 `blue`, `magenta`, `cyan` and `white`.  The first color given is the
-foreground; the second is the background.
+foreground; the second is the background.  All the basic colors except
+`normal` have a bright variant that can be speficied by prefixing the
+color with `bright`, like `brightred`.
 +
 Colors may also be given as numbers between 0 and 255; these use ANSI
 256-color mode (but note that not all terminals may support this).  If
@@ -444,6 +446,8 @@ include::config/stash.txt[]
 include::config/submodule.txt[]
 
 include::config/tag.txt[]
+
+include::config/tar.txt[]
 
 include::config/trace2.txt[]
 

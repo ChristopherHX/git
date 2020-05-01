@@ -59,7 +59,7 @@ struct object_array {
 
 /*
  * object flag allocation:
- * revision.h:               0---------10                              25----28
+ * revision.h:               0---------10         15                   25----28
  * fetch-pack.c:             01
  * negotiator/default.c:       2--5
  * walker.c:                 0-2
@@ -150,6 +150,8 @@ struct object_list *object_list_insert(struct object *item,
 				       struct object_list **list_p);
 
 int object_list_contains(struct object_list *list, struct object *obj);
+
+void object_list_free(struct object_list **list);
 
 /* Object array handling .. */
 void add_object_array(struct object *obj, const char *name, struct object_array *array);

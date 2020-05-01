@@ -12,7 +12,7 @@
 #include "userdiff.h"
 #include "streaming.h"
 #include "tree-walk.h"
-#include "sha1-array.h"
+#include "oid-array.h"
 #include "packfile.h"
 #include "object-store.h"
 #include "promisor-remote.h"
@@ -42,7 +42,10 @@ static int filter_object(const char *path, unsigned mode,
 			     oid_to_hex(oid), path);
 	if ((type == OBJ_BLOB) && S_ISREG(mode)) {
 		struct strbuf strbuf = STRBUF_INIT;
-		if (convert_to_working_tree(&the_index, path, *buf, *size, &strbuf)) {
+		struct checkout_metadata meta;
+
+		init_checkout_metadata(&meta, NULL, NULL, oid);
+		if (convert_to_working_tree(&the_index, path, *buf, *size, &strbuf, &meta)) {
 			free(*buf);
 			*size = strbuf.len;
 			*buf = strbuf_detach(&strbuf, NULL);
@@ -262,7 +265,7 @@ static void expand_atom(struct strbuf *sb, const char *atom, int len,
 			strbuf_addstr(sb, data->rest);
 	} else if (is_atom("deltabase", atom, len)) {
 		if (data->mark_query)
-			data->info.delta_base_sha1 = data->delta_base_oid.hash;
+			data->info.delta_base_oid = &data->delta_base_oid;
 		else
 			strbuf_addstr(sb,
 				      oid_to_hex(&data->delta_base_oid));

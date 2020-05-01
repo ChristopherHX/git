@@ -59,6 +59,9 @@ N_("The previous cherry-pick is now empty, possibly due to conflict resolution.\
 "    git commit --allow-empty\n"
 "\n");
 
+static const char empty_rebase_pick_advice[] =
+N_("Otherwise, please use 'git rebase --skip'\n");
+
 static const char empty_cherry_pick_advice_single[] =
 N_("Otherwise, please use 'git cherry-pick --skip'\n");
 
@@ -122,7 +125,6 @@ static enum commit_msg_cleanup_mode cleanup_mode;
 static const char *cleanup_arg;
 
 static enum commit_whence whence;
-static int sequencer_in_use;
 static int use_editor = 1, include_status = 1;
 static int have_option_m;
 static struct strbuf message = STRBUF_INIT;
@@ -179,12 +181,7 @@ static void determine_whence(struct wt_status *s)
 {
 	if (file_exists(git_path_merge_head(the_repository)))
 		whence = FROM_MERGE;
-	else if (file_exists(git_path_cherry_pick_head(the_repository))) {
-		whence = FROM_CHERRY_PICK;
-		if (file_exists(git_path_seq_dir()))
-			sequencer_in_use = 1;
-	}
-	else
+	else if (!sequencer_determine_whence(the_repository, &whence))
 		whence = FROM_COMMIT;
 	if (s)
 		s->whence = whence;
@@ -367,7 +364,7 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 		die(_("index file corrupt"));
 
 	if (interactive) {
-		char *old_index_env = NULL;
+		char *old_index_env = NULL, *old_repo_index_file;
 		hold_locked_index(&index_lock, LOCK_DIE_ON_ERROR);
 
 		refresh_cache_or_die(refresh_flags);
@@ -375,12 +372,16 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 		if (write_locked_index(&the_index, &index_lock, 0))
 			die(_("unable to create temporary index"));
 
+		old_repo_index_file = the_repository->index_file;
+		the_repository->index_file =
+			(char *)get_lock_file_path(&index_lock);
 		old_index_env = xstrdup_or_null(getenv(INDEX_ENVIRONMENT));
-		setenv(INDEX_ENVIRONMENT, get_lock_file_path(&index_lock), 1);
+		setenv(INDEX_ENVIRONMENT, the_repository->index_file, 1);
 
 		if (interactive_add(argc, argv, prefix, patch_interactive) != 0)
 			die(_("interactive add failed"));
 
+		the_repository->index_file = old_repo_index_file;
 		if (old_index_env && *old_index_env)
 			setenv(INDEX_ENVIRONMENT, old_index_env, 1);
 		else
@@ -473,8 +474,10 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 	if (whence != FROM_COMMIT) {
 		if (whence == FROM_MERGE)
 			die(_("cannot do a partial commit during a merge."));
-		else if (whence == FROM_CHERRY_PICK)
+		else if (is_from_cherry_pick(whence))
 			die(_("cannot do a partial commit during a cherry-pick."));
+		else if (is_from_rebase(whence))
+			die(_("cannot do a partial commit during a rebase."));
 	}
 
 	if (list_paths(&partial, !current_head ? NULL : "HEAD", &pathspec))
@@ -791,7 +794,7 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 	 */
 	else if (whence == FROM_MERGE)
 		hook_arg1 = "merge";
-	else if (whence == FROM_CHERRY_PICK) {
+	else if (is_from_cherry_pick(whence) || whence == FROM_REBASE_PICK) {
 		hook_arg1 = "commit";
 		hook_arg2 = "CHERRY_PICK_HEAD";
 	}
@@ -969,12 +972,15 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 		run_status(stdout, index_file, prefix, 0, s);
 		if (amend)
 			fputs(_(empty_amend_advice), stderr);
-		else if (whence == FROM_CHERRY_PICK) {
+		else if (is_from_cherry_pick(whence) ||
+			 whence == FROM_REBASE_PICK) {
 			fputs(_(empty_cherry_pick_advice), stderr);
-			if (!sequencer_in_use)
+			if (whence == FROM_CHERRY_PICK_SINGLE)
 				fputs(_(empty_cherry_pick_advice_single), stderr);
-			else
+			else if (whence == FROM_CHERRY_PICK_MULTI)
 				fputs(_(empty_cherry_pick_advice_multi), stderr);
+			else
+				fputs(_(empty_rebase_pick_advice), stderr);
 		}
 		return 0;
 	}
@@ -1177,8 +1183,10 @@ static int parse_and_validate_options(int argc, const char *argv[],
 	if (amend && whence != FROM_COMMIT) {
 		if (whence == FROM_MERGE)
 			die(_("You are in the middle of a merge -- cannot amend."));
-		else if (whence == FROM_CHERRY_PICK)
+		else if (is_from_cherry_pick(whence))
 			die(_("You are in the middle of a cherry-pick -- cannot amend."));
+		else if (whence == FROM_REBASE_PICK)
+			die(_("You are in the middle of a rebase -- cannot amend."));
 	}
 	if (fixup_message && squash_message)
 		die(_("Options --squash and --fixup cannot be used together"));
@@ -1200,7 +1208,8 @@ static int parse_and_validate_options(int argc, const char *argv[],
 		use_message = edit_message;
 	if (amend && !use_message && !fixup_message)
 		use_message = "HEAD";
-	if (!use_message && whence != FROM_CHERRY_PICK && renew_authorship)
+	if (!use_message && !is_from_cherry_pick(whence) &&
+	    !is_from_rebase(whence) && renew_authorship)
 		die(_("--reset-author can be used only with -C, -c or --amend."));
 	if (use_message) {
 		use_message_buffer = read_commit_message(use_message);
@@ -1209,7 +1218,8 @@ static int parse_and_validate_options(int argc, const char *argv[],
 			author_message_buffer = use_message_buffer;
 		}
 	}
-	if (whence == FROM_CHERRY_PICK && !renew_authorship) {
+	if ((is_from_cherry_pick(whence) || whence == FROM_REBASE_PICK) &&
+	    !renew_authorship) {
 		author_message = "CHERRY_PICK_HEAD";
 		author_message_buffer = read_commit_message(author_message);
 	}
@@ -1627,8 +1637,10 @@ int cmd_commit(int argc, const char **argv, const char *prefix)
 			reduce_heads_replace(&parents);
 	} else {
 		if (!reflog_msg)
-			reflog_msg = (whence == FROM_CHERRY_PICK)
+			reflog_msg = is_from_cherry_pick(whence)
 					? "commit (cherry-pick)"
+					: is_from_rebase(whence)
+					? "commit (rebase)"
 					: "commit";
 		commit_list_insert(current_head, &parents);
 	}
@@ -1655,7 +1667,7 @@ int cmd_commit(int argc, const char **argv, const char *prefix)
 	}
 
 	if (amend) {
-		const char *exclude_gpgsig[2] = { "gpgsig", NULL };
+		const char *exclude_gpgsig[3] = { "gpgsig", "gpgsig-sha256", NULL };
 		extra = read_commit_extra_headers(current_head, exclude_gpgsig);
 	} else {
 		struct commit_extra_header **tail = &extra;
@@ -1689,7 +1701,7 @@ int cmd_commit(int argc, const char **argv, const char *prefix)
 		      "not exceeded, and then \"git restore --staged :/\" to recover."));
 
 	if (git_env_bool(GIT_TEST_COMMIT_GRAPH, 0) &&
-	    write_commit_graph_reachable(get_object_directory(), 0, NULL))
+	    write_commit_graph_reachable(the_repository->objects->odb, 0, NULL))
 		return 1;
 
 	repo_rerere(the_repository, 0);
@@ -1708,6 +1720,8 @@ int cmd_commit(int argc, const char **argv, const char *prefix)
 		print_commit_summary(the_repository, prefix,
 				     &oid, flags);
 	}
+
+	apply_autostash(git_path_merge_autostash(the_repository));
 
 	UNLEAK(err);
 	UNLEAK(sb);

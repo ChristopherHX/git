@@ -285,6 +285,11 @@ test_expect_success 'stash --no-keep-index' '
 	test bar,bar2 = $(cat file),$(cat file2)
 '
 
+test_expect_success 'dont assume push with non-option args' '
+	test_must_fail git stash -q drop 2>err &&
+	test_i18ngrep -e "subcommand wasn'\''t specified; '\''push'\'' can'\''t be assumed due to unexpected token '\''drop'\''" err
+'
+
 test_expect_success 'stash --invalid-option' '
 	echo bar5 >file &&
 	echo bar6 >file2 &&
@@ -1283,6 +1288,20 @@ test_expect_success 'stash handles skip-worktree entries nicely' '
 	git stash &&
 
 	git rev-parse --verify refs/stash:A.t
+'
+
+test_expect_success 'stash -c stash.useBuiltin=false warning ' '
+	expected="stash.useBuiltin support has been removed" &&
+
+	git -c stash.useBuiltin=false stash 2>err &&
+	test_i18ngrep "$expected" err &&
+	env GIT_TEST_STASH_USE_BUILTIN=false git stash 2>err &&
+	test_i18ngrep "$expected" err &&
+
+	git -c stash.useBuiltin=true stash 2>err &&
+	test_must_be_empty err &&
+	env GIT_TEST_STASH_USE_BUILTIN=true git stash 2>err &&
+	test_must_be_empty err
 '
 
 test_done
