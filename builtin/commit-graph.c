@@ -9,7 +9,9 @@
 
 static char const * const builtin_commit_graph_usage[] = {
 	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]"),
-	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] [--[no-]progress] <split options>"),
+	N_("git commit-graph write [--object-dir <objdir>] [--append] "
+	   "[--split[=<strategy>]] [--reachable|--stdin-packs|--stdin-commits] "
+	   "[--changed-paths] [--[no-]progress] <split options>"),
 	NULL
 };
 
@@ -19,7 +21,9 @@ static const char * const builtin_commit_graph_verify_usage[] = {
 };
 
 static const char * const builtin_commit_graph_write_usage[] = {
-	N_("git commit-graph write [--object-dir <objdir>] [--append|--split] [--reachable|--stdin-packs|--stdin-commits] [--[no-]progress] <split options>"),
+	N_("git commit-graph write [--object-dir <objdir>] [--append] "
+	   "[--split[=<strategy>]] [--reachable|--stdin-packs|--stdin-commits] "
+	   "[--changed-paths] [--[no-]progress] <split options>"),
 	NULL
 };
 
@@ -32,6 +36,7 @@ static struct opts_commit_graph {
 	int split;
 	int shallow;
 	int progress;
+	int enable_changed_paths;
 } opts;
 
 static struct object_directory *find_odb(struct repository *r,
@@ -114,10 +119,29 @@ static int graph_verify(int argc, const char **argv)
 extern int read_replace_refs;
 static struct split_commit_graph_opts split_opts;
 
+static int write_option_parse_split(const struct option *opt, const char *arg,
+				    int unset)
+{
+	enum commit_graph_split_flags *flags = opt->value;
+
+	opts.split = 1;
+	if (!arg)
+		return 0;
+
+	if (!strcmp(arg, "no-merge"))
+		*flags = COMMIT_GRAPH_SPLIT_MERGE_PROHIBITED;
+	else if (!strcmp(arg, "replace"))
+		*flags = COMMIT_GRAPH_SPLIT_REPLACE;
+	else
+		die(_("unrecognized --split argument, %s"), arg);
+
+	return 0;
+}
+
 static int graph_write(int argc, const char **argv)
 {
 	struct string_list *pack_indexes = NULL;
-	struct string_list *commit_hex = NULL;
+	struct oidset commits = OIDSET_INIT;
 	struct object_directory *odb = NULL;
 	struct string_list lines;
 	int result = 0;
@@ -135,9 +159,13 @@ static int graph_write(int argc, const char **argv)
 			N_("start walk at commits listed by stdin")),
 		OPT_BOOL(0, "append", &opts.append,
 			N_("include all commits already in the commit-graph file")),
+		OPT_BOOL(0, "changed-paths", &opts.enable_changed_paths,
+			N_("enable computation for changed paths")),
 		OPT_BOOL(0, "progress", &opts.progress, N_("force progress reporting")),
-		OPT_BOOL(0, "split", &opts.split,
-			N_("allow writing an incremental commit-graph file")),
+		OPT_CALLBACK_F(0, "split", &split_opts.flags, NULL,
+			N_("allow writing an incremental commit-graph file"),
+			PARSE_OPT_OPTARG | PARSE_OPT_NONEG,
+			write_option_parse_split),
 		OPT_INTEGER(0, "max-commits", &split_opts.max_commits,
 			N_("maximum number of commits in a non-base split commit-graph")),
 		OPT_INTEGER(0, "size-multiple", &split_opts.size_multiple,
@@ -168,6 +196,9 @@ static int graph_write(int argc, const char **argv)
 		flags |= COMMIT_GRAPH_WRITE_SPLIT;
 	if (opts.progress)
 		flags |= COMMIT_GRAPH_WRITE_PROGRESS;
+	if (opts.enable_changed_paths ||
+	    git_env_bool(GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS, 0))
+		flags |= COMMIT_GRAPH_WRITE_BLOOM_FILTERS;
 
 	read_replace_refs = 0;
 	odb = find_odb(the_repository, opts.obj_dir);
@@ -188,7 +219,20 @@ static int graph_write(int argc, const char **argv)
 		if (opts.stdin_packs)
 			pack_indexes = &lines;
 		if (opts.stdin_commits) {
-			commit_hex = &lines;
+			struct string_list_item *item;
+			oidset_init(&commits, lines.nr);
+			for_each_string_list_item(item, &lines) {
+				struct object_id oid;
+				const char *end;
+
+				if (parse_oid_hex(item->string, &oid, &end)) {
+					error(_("unexpected non-hex object ID: "
+						"%s"), item->string);
+					return 1;
+				}
+
+				oidset_insert(&commits, &oid);
+			}
 			flags |= COMMIT_GRAPH_WRITE_CHECK_OIDS;
 		}
 
@@ -197,7 +241,7 @@ static int graph_write(int argc, const char **argv)
 
 	if (write_commit_graph(odb,
 			       pack_indexes,
-			       commit_hex,
+			       opts.stdin_commits ? &commits : NULL,
 			       flags,
 			       &split_opts))
 		result = 1;
