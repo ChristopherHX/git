@@ -366,6 +366,51 @@ test_expect_success 'match percent-encoded values' '
 	EOF
 '
 
+test_expect_success 'match percent-encoded UTF-8 values in path' '
+	test_config credential.https://example.com.useHttpPath true &&
+	test_config credential.https://example.com/perú.git.helper "$HELPER" &&
+	check fill <<-\EOF
+	url=https://example.com/per%C3%BA.git
+	--
+	protocol=https
+	host=example.com
+	path=perú.git
+	username=foo
+	password=bar
+	--
+	EOF
+'
+
+test_expect_success 'match percent-encoded values in username' '
+	test_config credential.https://user%2fname@example.com/foo/bar.git.helper "$HELPER" &&
+	check fill <<-\EOF
+	url=https://user%2fname@example.com/foo/bar.git
+	--
+	protocol=https
+	host=example.com
+	username=foo
+	password=bar
+	--
+	EOF
+'
+
+test_expect_success 'fetch with multiple path components' '
+	test_unconfig credential.helper &&
+	test_config credential.https://example.com/foo/repo.git.helper "verbatim foo bar" &&
+	check fill <<-\EOF
+	url=https://example.com/foo/repo.git
+	--
+	protocol=https
+	host=example.com
+	username=foo
+	password=bar
+	--
+	verbatim: get
+	verbatim: protocol=https
+	verbatim: host=example.com
+	EOF
+'
+
 test_expect_success 'pull username from config' '
 	test_config credential.https://example.com.username foo &&
 	check fill <<-\EOF
@@ -607,6 +652,44 @@ test_expect_success 'url parser handles bare fragment marker' '
 test_expect_success 'url parser not confused by encoded markers' '
 	check_host_and_path https://example.com%23%3f%2f/foo.git \
 		"example.com#?/" foo.git
+'
+
+test_expect_success 'credential config with partial URLs' '
+	echo "echo password=yep" | write_script git-credential-yep &&
+	test_write_lines url=https://user@example.com/repo.git >stdin &&
+	for partial in \
+		example.com \
+		user@example.com \
+		https:// \
+		https://example.com \
+		https://example.com/ \
+		https://user@example.com \
+		https://user@example.com/ \
+		https://example.com/repo.git \
+		https://user@example.com/repo.git \
+		/repo.git
+	do
+		git -c credential.$partial.helper=yep \
+			credential fill <stdin >stdout &&
+		grep yep stdout ||
+		return 1
+	done &&
+
+	for partial in \
+		dont.use.this \
+		http:// \
+		/repo
+	do
+		git -c credential.$partial.helper=yep \
+			credential fill <stdin >stdout &&
+		! grep yep stdout ||
+		return 1
+	done &&
+
+	git -c credential.$partial.helper=yep \
+		-c credential.with%0anewline.username=uh-oh \
+		credential fill <stdin >stdout 2>stderr &&
+	test_i18ngrep "skipping credential lookup for key" stderr
 '
 
 test_done
