@@ -1,4 +1,4 @@
-name: CI
+name: BuildAndUpdateGitNanoWin32
 on:
   push:
   schedule:
@@ -18,12 +18,12 @@ jobs:
       run: |
         git remote add upstream https://github.com/git/git.git
         git fetch upstream
-        git config --global user.email "CI@local"
-        git config --global user.name "CI Bot"
-        git checkout -b masterb
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git checkout -b localmain
         git merge upstream/master
         git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
-        git push --follow-tags origin masterb:master
+        git push --follow-tags origin localmain:main
   makeCommandlist:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -39,6 +39,14 @@ jobs:
       with:
         name: Commandlist
         path: command-list.h
+    - name: Make config-list.h
+      working-directory: ${{ github.workspace }}
+      run: make config-list.h
+    - name: Upload config-list.h for Windows
+      uses: actions/upload-artifact@v1
+      with:
+        name: Configlist
+        path: config-list.h
   build:
     needs: makeCommandlist
     runs-on: windows-latest
@@ -52,6 +60,12 @@ jobs:
         name: Commandlist
     - name: Move command-list.h to right folder
       run: powershell -Command "mv Commandlist\command-list.h command-list.h"
+    - name: Grab config-list.h for Windows
+      uses: actions/download-artifact@v1
+      with:
+        name: Configlist
+    - name: Move config-list.h to right folder
+      run: powershell -Command "mv Configlist\config-list.h config-list.h"
     - name: Get zlib
       working-directory: ${{ github.workspace }}\..
       run: git clone https://github.com/madler/zlib.git
