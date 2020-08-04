@@ -70,6 +70,22 @@ test_expect_success 'setup a submodule tree' '
 	)
 '
 
+test_expect_success 'update --remote falls back to using HEAD' '
+	test_create_repo main-branch-submodule &&
+	test_commit -C main-branch-submodule initial &&
+
+	test_create_repo main-branch &&
+	git -C main-branch submodule add ../main-branch-submodule &&
+	git -C main-branch commit -m add-submodule &&
+
+	git -C main-branch-submodule switch -c hello &&
+	test_commit -C main-branch-submodule world &&
+
+	git clone --recursive main-branch main-branch-clone &&
+	git -C main-branch-clone submodule update --remote main-branch-submodule &&
+	test_path_exists main-branch-clone/main-branch-submodule/world.t
+'
+
 test_expect_success 'submodule update detaching the HEAD ' '
 	(cd super/submodule &&
 	 git reset --hard HEAD~1
@@ -960,7 +976,7 @@ test_expect_success 'submodule update clone shallow submodule outside of depth' 
 		mv -f .gitmodules.tmp .gitmodules &&
 		# Some protocol versions (e.g. 2) support fetching
 		# unadvertised objects, so restrict this test to v0.
-		test_must_fail env GIT_TEST_PROTOCOL_VERSION= \
+		test_must_fail env GIT_TEST_PROTOCOL_VERSION=0 \
 			git submodule update --init --depth=1 2>actual &&
 		test_i18ngrep "Direct fetching of that commit failed." actual &&
 		git -C ../submodule config uploadpack.allowReachableSHA1InWant true &&

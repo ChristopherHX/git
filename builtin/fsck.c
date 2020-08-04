@@ -49,6 +49,7 @@ static int name_objects;
 #define ERROR_PACK 04
 #define ERROR_REFS 010
 #define ERROR_COMMIT_GRAPH 020
+#define ERROR_MULTI_PACK_INDEX 040
 
 static const char *describe_object(const struct object_id *oid)
 {
@@ -240,7 +241,7 @@ static void mark_unreachable_referents(const struct object_id *oid)
 		enum object_type type = oid_object_info(the_repository,
 							&obj->oid, NULL);
 		if (type > 0)
-			object_as_type(the_repository, obj, type, 0);
+			object_as_type(obj, type, 0);
 	}
 
 	options.walk = mark_used;
@@ -576,7 +577,7 @@ static void get_default_heads(void)
 
 	for_each_rawref(fsck_handle_ref, NULL);
 
-	worktrees = get_worktrees(0);
+	worktrees = get_worktrees();
 	for (p = worktrees; *p; p++) {
 		struct worktree *wt = *p;
 		struct strbuf ref = STRBUF_INIT;
@@ -952,7 +953,7 @@ int cmd_fsck(int argc, const char **argv, const char *prefix)
 			midx_argv[2] = "--object-dir";
 			midx_argv[3] = odb->path;
 			if (run_command(&midx_verify))
-				errors_found |= ERROR_COMMIT_GRAPH;
+				errors_found |= ERROR_MULTI_PACK_INDEX;
 		}
 	}
 

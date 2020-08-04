@@ -245,6 +245,18 @@ void strbuf_addchars(struct strbuf *sb, int c, size_t n);
 void strbuf_insert(struct strbuf *sb, size_t pos, const void *, size_t);
 
 /**
+ * Insert a NUL-terminated string to the given position of the buffer.
+ * The remaining contents will be shifted, not overwritten.  It's an
+ * inline function to allow the compiler to resolve strlen() calls on
+ * constants at compile time.
+ */
+static inline void strbuf_insertstr(struct strbuf *sb, size_t pos,
+				    const char *s)
+{
+	strbuf_insert(sb, pos, s, strlen(s));
+}
+
+/**
  * Insert data to the given position of the buffer giving a printf format
  * string. The contents will be shifted, not overwritten.
  */
@@ -366,6 +378,17 @@ size_t strbuf_expand_dict_cb(struct strbuf *sb,
  */
 void strbuf_addbuf_percentquote(struct strbuf *dst, const struct strbuf *src);
 
+#define STRBUF_ENCODE_SLASH 1
+
+/**
+ * Append the contents of a string to a strbuf, percent-encoding any characters
+ * that are needed to be encoded for a URL.
+ *
+ * If STRBUF_ENCODE_SLASH is set in flags, percent-encode slashes.  Otherwise,
+ * slashes are not percent-encoded.
+ */
+void strbuf_add_percentencode(struct strbuf *dst, const char *src, int flags);
+
 /**
  * Append the given byte size as a human-readable string (i.e. 12.23 KiB,
  * 3.50 MiB).
@@ -483,6 +506,12 @@ int strbuf_getline(struct strbuf *sb, FILE *file);
  * any) in the buffer.
  */
 int strbuf_getwholeline(struct strbuf *sb, FILE *file, int term);
+
+/**
+ * Like `strbuf_getwholeline`, but appends the line instead of
+ * resetting the buffer first.
+ */
+int strbuf_appendwholeline(struct strbuf *sb, FILE *file, int term);
 
 /**
  * Like `strbuf_getwholeline`, but operates on a file descriptor.

@@ -31,7 +31,16 @@ diff_cmp () {
 # indicates a dumb terminal, so we set that variable, too.
 
 force_color () {
-	env GIT_PAGER_IN_USE=true TERM=vt100 "$@"
+	# The first element of $@ may be a shell function, as a result POSIX
+	# does not guarantee that "one-shot assignment" will not persist after
+	# the function call. Thus, we prevent these variables from escaping
+	# this function's context with this subshell.
+	(
+		GIT_PAGER_IN_USE=true &&
+		TERM=vt100 &&
+		export GIT_PAGER_IN_USE TERM &&
+		"$@"
+	)
 }
 
 test_expect_success 'setup (initial)' '
@@ -412,6 +421,25 @@ test_expect_success 'deleting an empty file' '
 	diff_cmp expected diff
 '
 
+test_expect_success 'adding an empty file' '
+	git init added &&
+	(
+		cd added &&
+		test_commit initial &&
+		>empty &&
+		git add empty &&
+		test_tick &&
+		git commit -m empty &&
+		git tag added-file &&
+		git reset --hard HEAD^ &&
+		test_path_is_missing empty &&
+
+		echo y | git checkout -p added-file -- >actual &&
+		test_path_is_file empty &&
+		test_i18ngrep "Apply addition to index and worktree" actual
+	)
+'
+
 test_expect_success 'split hunk setup' '
 	git reset --hard &&
 	test_write_lines 10 20 30 40 50 60 >test &&
@@ -553,6 +581,19 @@ test_expect_success 'diffs can be colorized' '
 	grep "$(printf "\\033")" output
 '
 
+test_expect_success 'colorized diffs respect diff.wsErrorHighlight' '
+	git reset --hard &&
+
+	echo "old " >test &&
+	git add test &&
+	echo "new " >test &&
+
+	printf y >y &&
+	force_color git -c diff.wsErrorHighlight=all add -p >output.raw 2>&1 <y &&
+	test_decode_color <output.raw >output &&
+	grep "old<" output
+'
+
 test_expect_success 'diffFilter filters diff' '
 	git reset --hard &&
 
@@ -570,9 +611,9 @@ test_expect_success 'detect bogus diffFilter output' '
 	git reset --hard &&
 
 	echo content >test &&
-	test_config interactive.diffFilter "echo too-short" &&
+	test_config interactive.diffFilter "sed 1d" &&
 	printf y >y &&
-	test_must_fail force_color git add -p <y
+	force_color test_must_fail git add -p <y
 '
 
 test_expect_success 'diff.algorithm is passed to `git diff-files`' '
@@ -767,7 +808,7 @@ test_expect_success 'add -p patch editing works with pathological context lines'
 test_expect_success 'checkout -p works with pathological context lines' '
 	test_write_lines a a a a a a >a &&
 	git add a &&
-	test_write_lines a b a b a b a b a b a > a&&
+	test_write_lines a b a b a b a b a b a >a &&
 	test_write_lines s n n y q | git checkout -p &&
 	test_write_lines a b a b a a b a b a >expect &&
 	test_cmp expect a

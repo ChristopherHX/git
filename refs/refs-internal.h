@@ -96,12 +96,6 @@ enum peel_status {
  */
 enum peel_status peel_object(const struct object_id *name, struct object_id *oid);
 
-/*
- * Copy the reflog message msg to sb while cleaning up the whitespaces.
- * Especially, convert LF to space, because reflog file is one line per entry.
- */
-void copy_reflog_msg(struct strbuf *sb, const char *msg);
-
 /**
  * Information needed for a single ref update. Set new_oid to the new
  * value or to null_oid to delete the ref. To check the old value
@@ -347,9 +341,13 @@ int is_empty_ref_iterator(struct ref_iterator *ref_iterator);
 /*
  * Return an iterator that goes over each reference in `refs` for
  * which the refname begins with prefix. If trim is non-zero, then
- * trim that many characters off the beginning of each refname. flags
- * can be DO_FOR_EACH_INCLUDE_BROKEN to include broken references in
- * the iteration. The output is ordered by refname.
+ * trim that many characters off the beginning of each refname.
+ * The output is ordered by refname. The following flags are supported:
+ *
+ * DO_FOR_EACH_INCLUDE_BROKEN: include broken references in
+ *         the iteration.
+ *
+ * DO_FOR_EACH_PER_WORKTREE_ONLY: only produce REF_TYPE_PER_WORKTREE refs.
  */
 struct ref_iterator *refs_ref_iterator_begin(
 		struct ref_store *refs,
@@ -438,6 +436,14 @@ void base_ref_iterator_free(struct ref_iterator *iter);
 
 /* Virtual function declarations for ref_iterators: */
 
+/*
+ * backend-specific implementation of ref_iterator_advance. For symrefs, the
+ * function should set REF_ISSYMREF, and it should also dereference the symref
+ * to provide the OID referent. If DO_FOR_EACH_INCLUDE_BROKEN is set, symrefs
+ * with non-existent referents and refs pointing to non-existent object names
+ * should also be returned. If DO_FOR_EACH_PER_WORKTREE_ONLY, only
+ * REF_TYPE_PER_WORKTREE refs should be returned.
+ */
 typedef int ref_iterator_advance_fn(struct ref_iterator *ref_iterator);
 
 typedef int ref_iterator_peel_fn(struct ref_iterator *ref_iterator,

@@ -20,6 +20,10 @@ setdate_and_increment () {
 }
 
 test_expect_success setup '
+	test_oid_cache <<-EOF &&
+	disklen sha1:138
+	disklen sha256:154
+	EOF
 	setdate_and_increment &&
 	echo "Using $datestamp" > one &&
 	git add one &&
@@ -48,7 +52,29 @@ test_atom() {
 		sanitize_pgp <actual >actual.clean &&
 		test_cmp expected actual.clean
 	"
+	# Automatically test "contents:size" atom after testing "contents"
+	if test "$2" = "contents"
+	then
+		case $(git cat-file -t "$ref") in
+		tag)
+			# We cannot use $3 as it expects sanitize_pgp to run
+			expect=$(git cat-file tag $ref | tail -n +6 | wc -c) ;;
+		tree | blob)
+			expect='' ;;
+		commit)
+			expect=$(printf '%s' "$3" | wc -c) ;;
+		esac
+		# Leave $expect unquoted to lose possible leading whitespaces
+		echo $expect >expected
+		test_expect_${4:-success} $PREREQ "basic atom: $1 contents:size" '
+			git for-each-ref --format="%(contents:size)" "$ref" >actual &&
+			test_cmp expected actual
+		'
+	fi
 }
+
+hexlen=$(test_oid hexsz)
+disklen=$(test_oid disklen)
 
 test_atom head refname refs/heads/master
 test_atom head refname: refs/heads/master
@@ -82,9 +108,9 @@ test_atom head push:rstrip=-1 refs
 test_atom head push:strip=1 remotes/myfork/master
 test_atom head push:strip=-1 master
 test_atom head objecttype commit
-test_atom head objectsize 171
-test_atom head objectsize:disk 138
-test_atom head deltabase 0000000000000000000000000000000000000000
+test_atom head objectsize $((131 + hexlen))
+test_atom head objectsize:disk $disklen
+test_atom head deltabase $ZERO_OID
 test_atom head objectname $(git rev-parse refs/heads/master)
 test_atom head objectname:short $(git rev-parse --short refs/heads/master)
 test_atom head objectname:short=1 $(git rev-parse --short=1 refs/heads/master)
@@ -125,11 +151,11 @@ test_atom tag refname:short testtag
 test_atom tag upstream ''
 test_atom tag push ''
 test_atom tag objecttype tag
-test_atom tag objectsize 154
-test_atom tag objectsize:disk 138
-test_atom tag '*objectsize:disk' 138
-test_atom tag deltabase 0000000000000000000000000000000000000000
-test_atom tag '*deltabase' 0000000000000000000000000000000000000000
+test_atom tag objectsize $((114 + hexlen))
+test_atom tag objectsize:disk $disklen
+test_atom tag '*objectsize:disk' $disklen
+test_atom tag deltabase $ZERO_OID
+test_atom tag '*deltabase' $ZERO_OID
 test_atom tag objectname $(git rev-parse refs/tags/testtag)
 test_atom tag objectname:short $(git rev-parse --short refs/tags/testtag)
 test_atom head objectname:short=1 $(git rev-parse --short=1 refs/heads/master)
@@ -139,7 +165,7 @@ test_atom tag parent ''
 test_atom tag numparent ''
 test_atom tag object $(git rev-parse refs/tags/testtag^0)
 test_atom tag type 'commit'
-test_atom tag '*objectname' 'ea122842f48be4afb2d1fc6a4b96c05885ab7463'
+test_atom tag '*objectname' $(git rev-parse refs/tags/testtag^{})
 test_atom tag '*objecttype' 'commit'
 test_atom tag author ''
 test_atom tag authorname ''
@@ -643,17 +669,78 @@ test_atom refs/tags/signed-long contents "subject line
 body contents
 $sig"
 
-cat >expected <<EOF
-$(git rev-parse refs/tags/bogo) <committer@example.com> refs/tags/bogo
-$(git rev-parse refs/tags/master) <committer@example.com> refs/tags/master
-EOF
+test_expect_success 'set up refs pointing to tree and blob' '
+	git update-ref refs/mytrees/first refs/heads/master^{tree} &&
+	git update-ref refs/myblobs/first refs/heads/master:one
+'
+
+test_atom refs/mytrees/first subject ""
+test_atom refs/mytrees/first contents:subject ""
+test_atom refs/mytrees/first body ""
+test_atom refs/mytrees/first contents:body ""
+test_atom refs/mytrees/first contents:signature ""
+test_atom refs/mytrees/first contents ""
+
+test_atom refs/myblobs/first subject ""
+test_atom refs/myblobs/first contents:subject ""
+test_atom refs/myblobs/first body ""
+test_atom refs/myblobs/first contents:body ""
+test_atom refs/myblobs/first contents:signature ""
+test_atom refs/myblobs/first contents ""
+
+test_expect_success 'set up multiple-sort tags' '
+	for when in 100000 200000
+	do
+		for email in user1 user2
+		do
+			for ref in ref1 ref2
+			do
+				GIT_COMMITTER_DATE="@$when +0000" \
+				GIT_COMMITTER_EMAIL="$email@example.com" \
+				git tag -m "tag $ref-$when-$email" \
+				multi-$ref-$when-$email || return 1
+			done
+		done
+	done
+'
 
 test_expect_success 'Verify sort with multiple keys' '
-	git for-each-ref --format="%(objectname) %(taggeremail) %(refname)" --sort=objectname --sort=taggeremail \
-		refs/tags/bogo refs/tags/master > actual &&
+	cat >expected <<-\EOF &&
+	100000 <user1@example.com> refs/tags/multi-ref2-100000-user1
+	100000 <user1@example.com> refs/tags/multi-ref1-100000-user1
+	100000 <user2@example.com> refs/tags/multi-ref2-100000-user2
+	100000 <user2@example.com> refs/tags/multi-ref1-100000-user2
+	200000 <user1@example.com> refs/tags/multi-ref2-200000-user1
+	200000 <user1@example.com> refs/tags/multi-ref1-200000-user1
+	200000 <user2@example.com> refs/tags/multi-ref2-200000-user2
+	200000 <user2@example.com> refs/tags/multi-ref1-200000-user2
+	EOF
+	git for-each-ref \
+		--format="%(taggerdate:unix) %(taggeremail) %(refname)" \
+		--sort=-refname \
+		--sort=taggeremail \
+		--sort=taggerdate \
+		"refs/tags/multi-*" >actual &&
 	test_cmp expected actual
 '
 
+test_expect_success 'equivalent sorts fall back on refname' '
+	cat >expected <<-\EOF &&
+	100000 <user1@example.com> refs/tags/multi-ref1-100000-user1
+	100000 <user2@example.com> refs/tags/multi-ref1-100000-user2
+	100000 <user1@example.com> refs/tags/multi-ref2-100000-user1
+	100000 <user2@example.com> refs/tags/multi-ref2-100000-user2
+	200000 <user1@example.com> refs/tags/multi-ref1-200000-user1
+	200000 <user2@example.com> refs/tags/multi-ref1-200000-user2
+	200000 <user1@example.com> refs/tags/multi-ref2-200000-user1
+	200000 <user2@example.com> refs/tags/multi-ref2-200000-user2
+	EOF
+	git for-each-ref \
+		--format="%(taggerdate:unix) %(taggeremail) %(refname)" \
+		--sort=taggerdate \
+		"refs/tags/multi-*" >actual &&
+	test_cmp expected actual
+'
 
 test_expect_success 'do not dereference NULL upon %(HEAD) on unborn branch' '
 	test_when_finished "git checkout master" &&
@@ -885,6 +972,46 @@ test_expect_success 'for-each-ref --ignore-case ignores case' '
 	echo refs/heads/master >expect &&
 	git for-each-ref --format="%(refname)" --ignore-case \
 		refs/heads/MASTER >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'for-each-ref --ignore-case works on multiple sort keys' '
+	# name refs numerically to avoid case-insensitive filesystem conflicts
+	nr=0 &&
+	for email in a A b B
+	do
+		for subject in a A b B
+		do
+			GIT_COMMITTER_EMAIL="$email@example.com" \
+			git tag -m "tag $subject" icase-$(printf %02d $nr) &&
+			nr=$((nr+1))||
+			return 1
+		done
+	done &&
+	git for-each-ref --ignore-case \
+		--format="%(taggeremail) %(subject) %(refname)" \
+		--sort=refname \
+		--sort=subject \
+		--sort=taggeremail \
+		refs/tags/icase-* >actual &&
+	cat >expect <<-\EOF &&
+	<a@example.com> tag a refs/tags/icase-00
+	<a@example.com> tag A refs/tags/icase-01
+	<A@example.com> tag a refs/tags/icase-04
+	<A@example.com> tag A refs/tags/icase-05
+	<a@example.com> tag b refs/tags/icase-02
+	<a@example.com> tag B refs/tags/icase-03
+	<A@example.com> tag b refs/tags/icase-06
+	<A@example.com> tag B refs/tags/icase-07
+	<b@example.com> tag a refs/tags/icase-08
+	<b@example.com> tag A refs/tags/icase-09
+	<B@example.com> tag a refs/tags/icase-12
+	<B@example.com> tag A refs/tags/icase-13
+	<b@example.com> tag b refs/tags/icase-10
+	<b@example.com> tag B refs/tags/icase-11
+	<B@example.com> tag b refs/tags/icase-14
+	<B@example.com> tag B refs/tags/icase-15
+	EOF
 	test_cmp expect actual
 '
 

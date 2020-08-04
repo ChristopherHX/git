@@ -11,7 +11,7 @@ D=$(pwd)
 
 test_bundle_object_count () {
 	git verify-pack -v "$1" >verify.out &&
-	test "$2" = $(grep '^[0-9a-f]\{40\} ' verify.out | wc -l)
+	test "$2" = $(grep "^$OID_REGEX " verify.out | wc -l)
 }
 
 convert_bundle_to_pack () {
@@ -285,9 +285,10 @@ test_expect_success 'create bundle 1' '
 '
 
 test_expect_success 'header of bundle looks right' '
+	head -n 4 "$D"/bundle1 &&
 	head -n 1 "$D"/bundle1 | grep "^#" &&
-	head -n 2 "$D"/bundle1 | grep "^-[0-9a-f]\{40\} " &&
-	head -n 3 "$D"/bundle1 | grep "^[0-9a-f]\{40\} " &&
+	head -n 2 "$D"/bundle1 | grep "^-$OID_REGEX " &&
+	head -n 3 "$D"/bundle1 | grep "^$OID_REGEX " &&
 	head -n 4 "$D"/bundle1 | grep "^$"
 '
 
@@ -313,7 +314,7 @@ test_expect_success 'bundle 1 has only 3 files ' '
 test_expect_success 'unbundle 2' '
 	cd "$D/bundle" &&
 	git fetch ../bundle2 master:master &&
-	test "tip" = "$(git log -1 --pretty=oneline master | cut -b42-)"
+	test "tip" = "$(git log -1 --pretty=oneline master | cut -d" " -f2)"
 '
 
 test_expect_success 'bundle does not prerequisite objects' '
@@ -378,7 +379,6 @@ test_expect_success 'fetch from GIT URL with a non-applying branch.<name>.merge 
 # the strange name is: a\!'b
 test_expect_success 'quoting of a strangely named repo' '
 	test_must_fail git fetch "a\\!'\''b" > result 2>&1 &&
-	cat result &&
 	grep "fatal: '\''a\\\\!'\''b'\''" result
 '
 
@@ -797,7 +797,7 @@ test_configured_prune true  true  unset unset pruned pruned \
 	"--prune origin refs/tags/*:refs/tags/* +refs/heads/*:refs/remotes/origin/*"
 
 # --prune-tags on its own does nothing, needs --prune as well, same
-# for for fetch.pruneTags without fetch.prune
+# for fetch.pruneTags without fetch.prune
 test_configured_prune unset unset unset unset kept kept     "--prune-tags"
 test_configured_prune unset unset true unset  kept kept     ""
 test_configured_prune unset unset unset true  kept kept     ""

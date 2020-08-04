@@ -116,7 +116,7 @@ struct child_process {
 	unsigned no_stdin:1;
 	unsigned no_stdout:1;
 	unsigned no_stderr:1;
-    unsigned git_cmd:1; /* if this is to be git sub-command */
+	unsigned git_cmd:1; /* if this is to be git sub-command */
 
 	/**
 	 * If the program cannot be found, the functions return -1 and set
@@ -218,12 +218,18 @@ LAST_ARG_MUST_BE_NULL
 int run_hook_le(const char *const *env, const char *name, ...);
 int run_hook_ve(const char *const *env, const char *name, va_list args);
 
+/*
+ * Trigger an auto-gc
+ */
+int run_auto_gc(int quiet);
+
 #define RUN_COMMAND_NO_STDIN 1
 #define RUN_GIT_CMD	     2	/*If this is to be git sub-command */
 #define RUN_COMMAND_STDOUT_TO_STDERR 4
 #define RUN_SILENT_EXEC_FAILURE 8
 #define RUN_USING_SHELL 16
 #define RUN_CLEAN_ON_EXIT 32
+#define RUN_WAIT_AFTER_CLEAN 64
 
 /**
  * Convenience functions that encapsulate a sequence of

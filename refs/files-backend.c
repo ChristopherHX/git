@@ -465,8 +465,7 @@ stat_ref:
 	close(fd);
 	strbuf_rtrim(&sb_contents);
 	buf = sb_contents.buf;
-	if (starts_with(buf, "ref:")) {
-		buf += 4;
+	if (skip_prefix(buf, "ref:", &buf)) {
 		while (isspace(*buf))
 			buf++;
 
@@ -1629,8 +1628,10 @@ static int log_ref_write_fd(int fd, const struct object_id *old_oid,
 	int ret = 0;
 
 	strbuf_addf(&sb, "%s %s %s", oid_to_hex(old_oid), oid_to_hex(new_oid), committer);
-	if (msg && *msg)
-		copy_reflog_msg(&sb, msg);
+	if (msg && *msg) {
+		strbuf_addch(&sb, '\t');
+		strbuf_addstr(&sb, msg);
+	}
 	strbuf_addch(&sb, '\n');
 	if (write_in_full(fd, sb.buf, sb.len) < 0)
 		ret = -1;
@@ -2566,16 +2567,18 @@ static void files_transaction_cleanup(struct files_ref_store *refs,
 		}
 	}
 
-	if (backend_data->packed_transaction &&
-	    ref_transaction_abort(backend_data->packed_transaction, &err)) {
-		error("error aborting transaction: %s", err.buf);
-		strbuf_release(&err);
+	if (backend_data) {
+		if (backend_data->packed_transaction &&
+		    ref_transaction_abort(backend_data->packed_transaction, &err)) {
+			error("error aborting transaction: %s", err.buf);
+			strbuf_release(&err);
+		}
+
+		if (backend_data->packed_refs_locked)
+			packed_refs_unlock(refs->packed_ref_store);
+
+		free(backend_data);
 	}
-
-	if (backend_data->packed_refs_locked)
-		packed_refs_unlock(refs->packed_ref_store);
-
-	free(backend_data);
 
 	transaction->state = REF_TRANSACTION_CLOSED;
 }

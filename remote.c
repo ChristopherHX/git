@@ -174,54 +174,43 @@ static void add_merge(struct branch *branch, const char *name)
 	branch->merge_name[branch->merge_nr++] = name;
 }
 
-static struct branch *make_branch(const char *name, int len)
+static struct branch *make_branch(const char *name, size_t len)
 {
 	struct branch *ret;
 	int i;
 
 	for (i = 0; i < branches_nr; i++) {
-		if (len ? (!strncmp(name, branches[i]->name, len) &&
-			   !branches[i]->name[len]) :
-		    !strcmp(name, branches[i]->name))
+		if (!strncmp(name, branches[i]->name, len) &&
+		    !branches[i]->name[len])
 			return branches[i];
 	}
 
 	ALLOC_GROW(branches, branches_nr + 1, branches_alloc);
 	ret = xcalloc(1, sizeof(struct branch));
 	branches[branches_nr++] = ret;
-	if (len)
-		ret->name = xstrndup(name, len);
-	else
-		ret->name = xstrdup(name);
+	ret->name = xstrndup(name, len);
 	ret->refname = xstrfmt("refs/heads/%s", ret->name);
 
 	return ret;
 }
 
-static struct rewrite *make_rewrite(struct rewrites *r, const char *base, int len)
+static struct rewrite *make_rewrite(struct rewrites *r,
+				    const char *base, size_t len)
 {
 	struct rewrite *ret;
 	int i;
 
 	for (i = 0; i < r->rewrite_nr; i++) {
-		if (len
-		    ? (len == r->rewrite[i]->baselen &&
-		       !strncmp(base, r->rewrite[i]->base, len))
-		    : !strcmp(base, r->rewrite[i]->base))
+		if (len == r->rewrite[i]->baselen &&
+		    !strncmp(base, r->rewrite[i]->base, len))
 			return r->rewrite[i];
 	}
 
 	ALLOC_GROW(r->rewrite, r->rewrite_nr + 1, r->rewrite_alloc);
 	ret = xcalloc(1, sizeof(struct rewrite));
 	r->rewrite[r->rewrite_nr++] = ret;
-	if (len) {
-		ret->base = xstrndup(base, len);
-		ret->baselen = len;
-	}
-	else {
-		ret->base = xstrdup(base);
-		ret->baselen = strlen(base);
-	}
+	ret->base = xstrndup(base, len);
+	ret->baselen = len;
 	return ret;
 }
 
@@ -287,7 +276,7 @@ static void read_branches_file(struct remote *remote)
 
 	/*
 	 * The branches file would have URL and optionally
-	 * #branch specified.  The "master" (or specified) branch is
+	 * #branch specified.  The default (or specified) branch is
 	 * fetched and stored in the local branch matching the
 	 * remote name.
 	 */
@@ -295,7 +284,7 @@ static void read_branches_file(struct remote *remote)
 	if (frag)
 		*(frag++) = '\0';
 	else
-		frag = "master";
+		frag = (char *)git_default_branch_name();
 
 	add_url_alias(remote, strbuf_detach(&buf, NULL));
 	strbuf_addf(&buf, "refs/heads/%s:refs/heads/%s",
@@ -316,7 +305,7 @@ static void read_branches_file(struct remote *remote)
 static int handle_config(const char *key, const char *value, void *cb)
 {
 	const char *name;
-	int namelen;
+	size_t namelen;
 	const char *subkey;
 	struct remote *remote;
 	struct branch *branch;
@@ -369,7 +358,8 @@ static int handle_config(const char *key, const char *value, void *cb)
 	}
 	remote = make_remote(name, namelen);
 	remote->origin = REMOTE_CONFIG;
-	if (current_config_scope() == CONFIG_SCOPE_REPO)
+	if (current_config_scope() == CONFIG_SCOPE_LOCAL ||
+	current_config_scope() == CONFIG_SCOPE_WORKTREE)
 		remote->configured_in_repo = 1;
 	if (!strcmp(subkey, "mirror"))
 		remote->mirror = git_config_bool(key, value);
@@ -469,7 +459,7 @@ static void read_config(void)
 		const char *head_ref = resolve_ref_unsafe("HEAD", 0, NULL, &flag);
 		if (head_ref && (flag & REF_ISSYMREF) &&
 		    skip_prefix(head_ref, "refs/heads/", &head_ref)) {
-			current_branch = make_branch(head_ref, 0);
+			current_branch = make_branch(head_ref, strlen(head_ref));
 		}
 	}
 	git_config(handle_config, NULL);
@@ -515,14 +505,11 @@ const char *pushremote_for_branch(struct branch *branch, int *explicit)
 	return remote_for_branch(branch, explicit);
 }
 
-const char *remote_ref_for_branch(struct branch *branch, int for_push,
-				  int *explicit)
+const char *remote_ref_for_branch(struct branch *branch, int for_push)
 {
 	if (branch) {
 		if (!for_push) {
 			if (branch->merge_nr) {
-				if (explicit)
-					*explicit = 1;
 				return branch->merge_name[0];
 			}
 		} else {
@@ -533,15 +520,11 @@ const char *remote_ref_for_branch(struct branch *branch, int for_push,
 			if (remote && remote->push.nr &&
 			    (dst = apply_refspecs(&remote->push,
 						  branch->refname))) {
-				if (explicit)
-					*explicit = 1;
 				return dst;
 			}
 		}
 	}
-	if (explicit)
-		*explicit = 0;
-	return "";
+	return NULL;
 }
 
 static struct remote *remote_get_1(const char *name,
@@ -1590,7 +1573,7 @@ struct branch *branch_get(const char *name)
 	if (!name || !*name || !strcmp(name, "HEAD"))
 		ret = current_branch;
 	else
-		ret = make_branch(name, 0);
+		ret = make_branch(name, strlen(name));
 	set_merge(ret);
 	return ret;
 }
@@ -2114,8 +2097,16 @@ struct ref *guess_remote_head(const struct ref *head,
 	if (head->symref)
 		return copy_ref(find_ref_by_name(refs, head->symref));
 
-	/* If refs/heads/master could be right, it is. */
+	/* If a remote branch exists with the default branch name, let's use it. */
 	if (!all) {
+		char *ref = xstrfmt("refs/heads/%s", git_default_branch_name());
+
+		r = find_ref_by_name(refs, ref);
+		free(ref);
+		if (r && oideq(&r->old_oid, &head->old_oid))
+			return copy_ref(r);
+
+		/* Fall back to the hard-coded historical default */
 		r = find_ref_by_name(refs, "refs/heads/master");
 		if (r && oideq(&r->old_oid, &head->old_oid))
 			return copy_ref(r);

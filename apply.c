@@ -3157,7 +3157,8 @@ static int apply_binary(struct apply_state *state,
 		 * See if the old one matches what the patch
 		 * applies to.
 		 */
-		hash_object_file(img->buf, img->len, blob_type, &oid);
+		hash_object_file(the_hash_algo, img->buf, img->len, blob_type,
+				 &oid);
 		if (strcmp(oid_to_hex(&oid), patch->old_oid_prefix))
 			return error(_("the patch applies to '%s' (%s), "
 				       "which does not match the "
@@ -3202,7 +3203,8 @@ static int apply_binary(struct apply_state *state,
 				     name);
 
 		/* verify that the result matches */
-		hash_object_file(img->buf, img->len, blob_type, &oid);
+		hash_object_file(the_hash_algo, img->buf, img->len, blob_type,
+				 &oid);
 		if (strcmp(oid_to_hex(&oid), patch->new_oid_prefix))
 			return error(_("binary patch to '%s' creates incorrect result (expecting %s, got %s)"),
 				name, patch->new_oid_prefix, oid_to_hex(&oid));
@@ -4347,7 +4349,7 @@ static int try_create_file(struct apply_state *state, const char *path,
 	if (fd < 0)
 		return 1;
 
-	if (convert_to_working_tree(state->repo->index, path, buf, size, &nbuf)) {
+	if (convert_to_working_tree(state->repo->index, path, buf, size, &nbuf, NULL)) {
 		size = nbuf.len;
 		buf  = nbuf.buf;
 	}
@@ -4962,15 +4964,15 @@ int apply_parse_options(int argc, const char **argv,
 			const char * const *apply_usage)
 {
 	struct option builtin_apply_options[] = {
-		{ OPTION_CALLBACK, 0, "exclude", state, N_("path"),
+		OPT_CALLBACK_F(0, "exclude", state, N_("path"),
 			N_("don't apply changes matching the given path"),
-			PARSE_OPT_NONEG, apply_option_parse_exclude },
-		{ OPTION_CALLBACK, 0, "include", state, N_("path"),
+			PARSE_OPT_NONEG, apply_option_parse_exclude),
+		OPT_CALLBACK_F(0, "include", state, N_("path"),
 			N_("apply changes matching the given path"),
-			PARSE_OPT_NONEG, apply_option_parse_include },
-		{ OPTION_CALLBACK, 'p', NULL, state, N_("num"),
+			PARSE_OPT_NONEG, apply_option_parse_include),
+		OPT_CALLBACK('p', NULL, state, N_("num"),
 			N_("remove <num> leading slashes from traditional diff paths"),
-			0, apply_option_parse_p },
+			apply_option_parse_p),
 		OPT_BOOL(0, "no-add", &state->no_add,
 			N_("ignore additions made by the patch")),
 		OPT_BOOL(0, "stat", &state->diffstat,
@@ -5003,15 +5005,15 @@ int apply_parse_options(int argc, const char **argv,
 			N_("paths are separated with NUL character"), '\0'),
 		OPT_INTEGER('C', NULL, &state->p_context,
 				N_("ensure at least <n> lines of context match")),
-		{ OPTION_CALLBACK, 0, "whitespace", state, N_("action"),
+		OPT_CALLBACK(0, "whitespace", state, N_("action"),
 			N_("detect new or modified lines that have whitespace errors"),
-			0, apply_option_parse_whitespace },
-		{ OPTION_CALLBACK, 0, "ignore-space-change", state, NULL,
+			apply_option_parse_whitespace),
+		OPT_CALLBACK_F(0, "ignore-space-change", state, NULL,
 			N_("ignore changes in whitespace when finding context"),
-			PARSE_OPT_NOARG, apply_option_parse_space_change },
-		{ OPTION_CALLBACK, 0, "ignore-whitespace", state, NULL,
+			PARSE_OPT_NOARG, apply_option_parse_space_change),
+		OPT_CALLBACK_F(0, "ignore-whitespace", state, NULL,
 			N_("ignore changes in whitespace when finding context"),
-			PARSE_OPT_NOARG, apply_option_parse_space_change },
+			PARSE_OPT_NOARG, apply_option_parse_space_change),
 		OPT_BOOL('R', "reverse", &state->apply_in_reverse,
 			N_("apply the patch in reverse")),
 		OPT_BOOL(0, "unidiff-zero", &state->unidiff_zero,
@@ -5027,9 +5029,9 @@ int apply_parse_options(int argc, const char **argv,
 		OPT_BIT(0, "recount", options,
 			N_("do not trust the line counts in the hunk headers"),
 			APPLY_OPT_RECOUNT),
-		{ OPTION_CALLBACK, 0, "directory", state, N_("root"),
+		OPT_CALLBACK(0, "directory", state, N_("root"),
 			N_("prepend <root> to all filenames"),
-			0, apply_option_parse_directory },
+			apply_option_parse_directory),
 		OPT_END()
 	};
 
