@@ -1,0 +1,84 @@
+name: BuildAndUpdateGitNanoWin32
+on:
+  push:
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    # rebase and rebuild daily
+    - cron:  '0 0 * * *'
+jobs:
+  update:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - name: Update Upstream
+      working-directory: ${{ github.workspace }}
+      run: |
+        git remote add upstream https://github.com/git/git.git
+        git fetch upstream
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git checkout -b localmain
+        git merge upstream/master
+        git remote set-url origin https://ChristopherHX:${{ secrets.git }}@github.com/ChristopherHX/git.git
+        git push --follow-tags origin localmain:main
+  makeCommandlist:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - name: Make command-list.h
+      working-directory: ${{ github.workspace }}
+      run: make command-list.h
+    - name: Upload command-list.h for Windows
+      uses: actions/upload-artifact@v1
+      with:
+        name: Commandlist
+        path: command-list.h
+    - name: Make config-list.h
+      working-directory: ${{ github.workspace }}
+      run: make config-list.h
+    - name: Upload config-list.h for Windows
+      uses: actions/upload-artifact@v1
+      with:
+        name: Configlist
+        path: config-list.h
+  build:
+    needs: makeCommandlist
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        ref: master
+    - name: Grab command-list.h for Windows
+      uses: actions/download-artifact@v1
+      with:
+        name: Commandlist
+    - name: Move command-list.h to right folder
+      run: powershell -Command "mv Commandlist\command-list.h command-list.h"
+    - name: Grab config-list.h for Windows
+      uses: actions/download-artifact@v1
+      with:
+        name: Configlist
+    - name: Move config-list.h to right folder
+      run: powershell -Command "mv Configlist\config-list.h config-list.h"
+    - name: Get zlib
+      working-directory: ${{ github.workspace }}\..
+      run: git clone https://github.com/madler/zlib.git
+    - name: Get curl
+      working-directory: ${{ github.workspace }}\..
+      run: git clone https://github.com/curl/curl.git
+    - name: Get Gettext
+      working-directory: ${{ github.workspace }}\..
+      run: git clone https://github.com/ChristopherHX/gettext-msvc.git
+    - name: Build
+      working-directory: ${{ github.workspace }}\contrib\msbuild\
+      run: powershell -Command "&'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe' /p:Configuration=Release /p:Platform=x64 /p:VersionsCode=$(git describe --abbrev=0) /p:CURLDIR=${{ github.workspace }}\..\curl /p:ZLIBDIR=${{ github.workspace }}\..\zlib /p:GETTEXTDIR=${{ github.workspace }}\..\gettext-msvc\gettext-0.19.8 /p:LIBICONVDIR=${{ github.workspace }}\..\gettext-msvc\libiconv-1.16"
+    - uses: actions/upload-artifact@master
+      with:
+        name: Git(nano)
+        path: ${{ github.workspace }}/contrib/msbuild/bin

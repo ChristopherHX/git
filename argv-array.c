@@ -13,7 +13,7 @@ void argv_array_init(struct argv_array *array)
 
 static void argv_array_push_nodup(struct argv_array *array, const char *value)
 {
-	if (array->argv == empty_argv)
+	if (!array->alloc)
 		array->argv = NULL;
 
 	ALLOC_GROW(array->argv, array->argc + 2, array->alloc);
@@ -88,7 +88,7 @@ void argv_array_split(struct argv_array *array, const char *to_split)
 
 void argv_array_clear(struct argv_array *array)
 {
-	if (array->argv != empty_argv) {
+	if (array->alloc) {
 		int i;
 		for (i = 0; i < array->argc; i++)
 			free((char *)array->argv[i]);
@@ -99,7 +99,7 @@ void argv_array_clear(struct argv_array *array)
 
 const char **argv_array_detach(struct argv_array *array)
 {
-	if (array->argv == empty_argv)
+	if (!array->alloc)
 		return xcalloc(1, sizeof(const char *));
 	else {
 		const char **ret = array->argv;
