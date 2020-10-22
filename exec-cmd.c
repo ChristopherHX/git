@@ -152,6 +152,10 @@ static int git_get_exec_path_darwin(struct strbuf *buf)
  */
 static int git_get_exec_path_wpgmptr(struct strbuf *buf)
 {
+	if(!_wpgmptr) {
+		//Failed _wpgmptr isn't set
+		return -1;
+	}
 	int len = wcslen(_wpgmptr) * 3 + 1;
 	strbuf_grow(buf, len);
 	len = xwcstoutf(buf->buf, _wpgmptr, len);
@@ -161,6 +165,35 @@ static int git_get_exec_path_wpgmptr(struct strbuf *buf)
 	return 0;
 }
 #endif /* HAVE_WPGMPTR */
+
+#ifdef _WIN32
+/*
+ * Resolves the executable path by using GetModuleFileNameW
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int git_get_exec_path_getmodulepath(struct strbuf *buf)
+{
+	struct strbuf wfilename;
+	strbuf_init(&wfilename, MAX_PATH * sizeof(wchar_t));
+	for (DWORD length = MAX_PATH; length < (1 << ((sizeof(DWORD) << 3) - 1)); length <<= 1){
+		DWORD len = GetModuleFileNameW(0, (wchar_t*)wfilename.buf, length) * 3 + 1;
+		if(GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+			// Grow Memory
+			strbuf_grow(buf, length * sizeof(wchar_t));
+			continue;
+		}
+		strbuf_grow(buf, len);
+		len = xwcstoutf(buf->buf, (wchar_t*)wfilename.buf, len);
+		strbuf_release(&wfilename);
+		if (len < 0)
+			return -1;
+		buf->len += len;
+		return 0;
+	}
+	return -1;
+}
+#endif /* _WIN32 */
 
 /*
  * Resolves the absolute path of the current executable.
@@ -199,6 +232,10 @@ static int git_get_exec_path(struct strbuf *buf, const char *argv0)
 #ifdef HAVE_WPGMPTR
 		git_get_exec_path_wpgmptr(buf) &&
 #endif /* HAVE_WPGMPTR */
+
+#ifdef _WIN32
+		git_get_exec_path_getmodulepath(buf) &&
+#endif /* _WIN32 */
 
 		git_get_exec_path_from_argv0(buf, argv0)) {
 		return -1;

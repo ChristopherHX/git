@@ -1,0 +1,8 @@
+bin/
+x86/
+x64/
+ARM/
+ARM64/
+.vscode/
+Debug/
+Release/
